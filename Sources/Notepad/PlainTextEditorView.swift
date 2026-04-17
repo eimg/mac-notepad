@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WebKit
 
 struct PlainTextEditorView: NSViewRepresentable {
     @Binding var text: String
@@ -9,107 +10,185 @@ struct PlainTextEditorView: NSViewRepresentable {
         Coordinator(text: $text)
     }
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = !preferences.wordWrap
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        configuration.userContentController.add(context.coordinator, name: Coordinator.handlerName)
 
-        let textView = NSTextView()
-        textView.delegate = context.coordinator
-        textView.isRichText = false
-        textView.importsGraphics = false
-        textView.usesFindBar = true
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticDataDetectionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.allowsUndo = true
-        textView.textContainerInset = NSSize(width: 12, height: 12)
-        textView.backgroundColor = .textBackgroundColor
-        textView.string = text
-
-        configure(textView: textView, in: scrollView)
-        scrollView.documentView = textView
-        return scrollView
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.loadHTMLString(Self.html, baseURL: nil)
+        return webView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.applyStateIfNeeded(
+            to: webView,
+            text: text,
+            preferences: preferences
+        )
+    }
 
-        if textView.string != text {
-            textView.string = text
+    static let html = """
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        :root { color-scheme: light dark; }
+        html, body {
+          margin: 0;
+          width: 100%;
+          height: 100%;
+          background: transparent;
+        }
+        textarea {
+          box-sizing: border-box;
+          width: 100%;
+          height: 100%;
+          border: 0;
+          outline: none;
+          resize: none;
+          margin: 0;
+          padding: 16px 18px;
+          background: Canvas;
+          color: CanvasText;
+          caret-color: AccentColor;
+          white-space: pre-wrap;
+          overflow-wrap: break-word;
+          tab-size: 4;
+          spellcheck: false;
+        }
+        textarea::placeholder {
+          color: color-mix(in srgb, CanvasText 45%, transparent);
+        }
+      </style>
+    </head>
+    <body>
+      <textarea id="editor" placeholder="Untitled"></textarea>
+      <script>
+        const editor = document.getElementById("editor");
+        let suppressSend = false;
+
+        function sendValue() {
+          if (suppressSend) return;
+          window.webkit.messageHandlers.notepadTextChanged.postMessage(editor.value);
         }
 
-        configure(textView: textView, in: scrollView)
-        context.coordinator.focusIfNeeded(textView)
-    }
-
-    private func configure(textView: NSTextView, in scrollView: NSScrollView) {
-        textView.font = preferences.nsFont
-        textView.isHorizontallyResizable = !preferences.wordWrap
-        textView.autoresizingMask = preferences.wordWrap ? [.width] : []
-        scrollView.hasHorizontalScroller = !preferences.wordWrap
-        applyParagraphStyle(to: textView)
-
-        if let textContainer = textView.textContainer {
-            textContainer.widthTracksTextView = preferences.wordWrap
-            textContainer.containerSize = preferences.wordWrap
-                ? NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
-                : NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        function applyConfig(config) {
+          editor.style.fontFamily = config.fontFamily;
+          editor.style.fontSize = `${config.fontSize}px`;
+          editor.style.lineHeight = `${config.lineHeight}`;
+          editor.style.whiteSpace = config.wordWrap ? "pre-wrap" : "pre";
+          editor.style.overflowWrap = config.wordWrap ? "break-word" : "normal";
+          editor.style.overflowX = config.wordWrap ? "hidden" : "auto";
+          editor.wrap = config.wordWrap ? "soft" : "off";
         }
 
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.minSize = NSSize(width: 0, height: 0)
-    }
+        editor.addEventListener("input", sendValue);
 
-    private func applyParagraphStyle(to textView: NSTextView) {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.minimumLineHeight = preferences.lineHeight
-        paragraphStyle.maximumLineHeight = preferences.lineHeight
-        let textColor = NSColor.textColor
+        window.notepad = {
+          applyState(state) {
+            applyConfig(state.preferences);
+            if (editor.value !== state.text) {
+              const start = editor.selectionStart;
+              const end = editor.selectionEnd;
+              suppressSend = true;
+              editor.value = state.text;
+              const next = Math.min(start, editor.value.length);
+              const nextEnd = Math.min(end, editor.value.length);
+              editor.setSelectionRange(next, nextEnd);
+              suppressSend = false;
+            }
+          },
+          focusEditor() {
+            editor.focus();
+          }
+        };
 
-        textView.defaultParagraphStyle = paragraphStyle
-        textView.typingAttributes[.paragraphStyle] = paragraphStyle
-        textView.typingAttributes[.font] = preferences.nsFont
-        textView.typingAttributes[.foregroundColor] = textColor
-        textView.textColor = textColor
+        requestAnimationFrame(() => {
+          window.notepad.focusEditor();
+        });
+      </script>
+    </body>
+    </html>
+    """
 
-        let attributedText = NSMutableAttributedString(string: textView.string)
-        let fullRange = NSRange(location: 0, length: attributedText.length)
-        attributedText.addAttribute(.font, value: preferences.nsFont, range: fullRange)
-        attributedText.addAttribute(.paragraphStyle, value: paragraphStyle, range: fullRange)
-        attributedText.addAttribute(.foregroundColor, value: textColor, range: fullRange)
-        textView.textStorage?.setAttributedString(attributedText)
-    }
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        static let handlerName = "notepadTextChanged"
 
-    final class Coordinator: NSObject, NSTextViewDelegate {
         private var text: Binding<String>
-        private var hasFocusedEditor = false
+        private var pageLoaded = false
+        private var lastRenderedState: RenderState?
 
         init(text: Binding<String>) {
             self.text = text
         }
 
-        @MainActor
-        func focusIfNeeded(_ textView: NSTextView) {
-            guard !hasFocusedEditor, let window = textView.window else { return }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            pageLoaded = true
+            applyStateIfNeeded(to: webView, text: text.wrappedValue, preferences: .default, force: true)
+            webView.evaluateJavaScript("window.notepad.focusEditor();")
+        }
 
-            hasFocusedEditor = true
-            DispatchQueue.main.async {
-                NSApp.activate(ignoringOtherApps: true)
-                window.makeKeyAndOrderFront(nil)
-                window.makeFirstResponder(textView)
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == Self.handlerName, let value = message.body as? String else { return }
+            if text.wrappedValue != value {
+                text.wrappedValue = value
+            }
+            if var currentState = lastRenderedState {
+                currentState.text = value
+                lastRenderedState = currentState
             }
         }
 
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            text.wrappedValue = textView.string
+        func applyStateIfNeeded(to webView: WKWebView, text: String, preferences: EditorPreferences, force: Bool = false) {
+            guard pageLoaded else { return }
+
+            let state = RenderState(text: text, preferences: preferences)
+            guard force || lastRenderedState != state else { return }
+            lastRenderedState = state
+
+            guard
+                let jsonData = try? JSONEncoder().encode(state),
+                let jsonString = String(data: jsonData, encoding: .utf8)
+            else { return }
+
+            let escapedJSON = jsonString
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "'", with: "\\'")
+                .replacingOccurrences(of: "\n", with: "\\n")
+                .replacingOccurrences(of: "\r", with: "\\r")
+                .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+                .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+
+            webView.evaluateJavaScript("window.notepad.applyState(JSON.parse('\(escapedJSON)'));")
+        }
+    }
+
+    private struct RenderState: Codable, Equatable {
+        var text: String
+        var preferences: RenderPreferences
+
+        init(text: String, preferences: EditorPreferences) {
+            self.text = text
+            self.preferences = RenderPreferences(preferences: preferences)
+        }
+    }
+
+    private struct RenderPreferences: Codable, Equatable {
+        var fontFamily: String
+        var fontSize: Double
+        var lineHeight: Double
+        var wordWrap: Bool
+
+        init(preferences: EditorPreferences) {
+            self.fontFamily = preferences.cssFontFamily
+            self.fontSize = preferences.fontSize
+            self.lineHeight = preferences.lineHeightMultiple
+            self.wordWrap = preferences.wordWrap
         }
     }
 }

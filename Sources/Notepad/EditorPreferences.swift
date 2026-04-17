@@ -37,6 +37,10 @@ struct EditorPreferences: Equatable {
             ?? NSFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular)
     }
 
+    var cssFontFamily: String {
+        "\"\(resolvedFontName)\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
+    }
+
     var lineHeight: CGFloat {
         let baseLineHeight = nsFont.ascender - nsFont.descender + nsFont.leading
         return baseLineHeight * CGFloat(lineHeightMultiple)

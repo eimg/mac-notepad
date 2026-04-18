@@ -8,6 +8,22 @@
 		<data>
 		SCjWLcgi9vrrLn49TM47qR9+nvE=
 		</data>
+		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/addon/display/placeholder.min.js</key>
+		<data>
+		hWHynDTm/Z9yK0HjK/GJhBDXyPk=
+		</data>
+		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/lib/codemirror.min.css</key>
+		<data>
+		9yoV+yqJwJ/A7CxSFeDCo7KZtdo=
+		</data>
+		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/lib/codemirror.min.js</key>
+		<data>
+		6/VxzUtC//W94ssfBbK2fQePmzo=
+		</data>
+		<key>Resources/Notepad_Notepad.bundle/Resources/editor.html</key>
+		<data>
+		n8vCsRuZnzt8Ci0nT/gKGd4sr88=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -16,6 +32,34 @@
 			<key>hash2</key>
 			<data>
 			9N/XbwdCDkyb6ctNyYHQDOuCuqASmmDDcHiaXeODJ98=
+			</data>
+		</dict>
+		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/addon/display/placeholder.min.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			YOAtF4Drijwzf51lrzIpxec5AsB+IezotoI++4OZDvI=
+			</data>
+		</dict>
+		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/lib/codemirror.min.css</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			EQdxEqtpVdKf5BCFxiNlx9Si8ApXDHR14q7CqMvIX8Q=
+			</data>
+		</dict>
+		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/lib/codemirror.min.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			8QK7YfsqxFw6YRhH7dmUj6rQqyKoOi36mXS+UDEHmxU=
+			</data>
+		</dict>
+		<key>Resources/Notepad_Notepad.bundle/Resources/editor.html</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			exEu8SB4Ekw7waUlzFfN6J3lna/LXROGMicvWCqQnMM=
 			</data>
 		</dict>
 	</dict>

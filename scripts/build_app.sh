@@ -37,6 +37,7 @@ iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/$ICON_NAME"
 cp "$ROOT_DIR/App/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$RELEASE_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
+find "$RELEASE_DIR" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$RESOURCES_DIR/" \;
 
 if command -v codesign >/dev/null 2>&1; then
     codesign --force --deep --sign - "$APP_DIR" >/dev/null

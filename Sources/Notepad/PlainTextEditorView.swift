@@ -18,7 +18,11 @@ struct PlainTextEditorView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
-        webView.loadHTMLString(Self.html, baseURL: nil)
+
+        if let editorURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
+            webView.loadFileURL(editorURL, allowingReadAccessTo: editorURL.deletingLastPathComponent())
+        }
+
         return webView
     }
 
@@ -29,92 +33,6 @@ struct PlainTextEditorView: NSViewRepresentable {
             preferences: preferences
         )
     }
-
-    static let html = """
-    <!doctype html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <style>
-        :root { color-scheme: light dark; }
-        html, body {
-          margin: 0;
-          width: 100%;
-          height: 100%;
-          background: transparent;
-        }
-        textarea {
-          box-sizing: border-box;
-          width: 100%;
-          height: 100%;
-          border: 0;
-          outline: none;
-          resize: none;
-          margin: 0;
-          padding: 16px 18px;
-          background: Canvas;
-          color: CanvasText;
-          caret-color: AccentColor;
-          white-space: pre-wrap;
-          overflow-wrap: break-word;
-          tab-size: 4;
-          spellcheck: false;
-        }
-        textarea::placeholder {
-          color: color-mix(in srgb, CanvasText 45%, transparent);
-        }
-      </style>
-    </head>
-    <body>
-      <textarea id="editor" placeholder="New note..."></textarea>
-      <script>
-        const editor = document.getElementById("editor");
-        let suppressSend = false;
-
-        function sendValue() {
-          if (suppressSend) return;
-          window.webkit.messageHandlers.notepadTextChanged.postMessage(editor.value);
-        }
-
-        function applyConfig(config) {
-          editor.style.fontFamily = config.fontFamily;
-          editor.style.fontSize = `${config.fontSize}px`;
-          editor.style.lineHeight = `${config.lineHeight}`;
-          editor.style.whiteSpace = config.wordWrap ? "pre-wrap" : "pre";
-          editor.style.overflowWrap = config.wordWrap ? "break-word" : "normal";
-          editor.style.overflowX = config.wordWrap ? "hidden" : "auto";
-          editor.wrap = config.wordWrap ? "soft" : "off";
-        }
-
-        editor.addEventListener("input", sendValue);
-
-        window.notepad = {
-          applyState(state) {
-            applyConfig(state.preferences);
-            if (editor.value !== state.text) {
-              const start = editor.selectionStart;
-              const end = editor.selectionEnd;
-              suppressSend = true;
-              editor.value = state.text;
-              const next = Math.min(start, editor.value.length);
-              const nextEnd = Math.min(end, editor.value.length);
-              editor.setSelectionRange(next, nextEnd);
-              suppressSend = false;
-            }
-          },
-          focusEditor() {
-            editor.focus();
-          }
-        };
-
-        requestAnimationFrame(() => {
-          window.notepad.focusEditor();
-        });
-      </script>
-    </body>
-    </html>
-    """
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         static let handlerName = "notepadTextChanged"

@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="codemirror/lib/codemirror.min.css">
+  <style>
+    :root { color-scheme: light dark; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+    }
+    body {
+      overflow: hidden;
+      background: Canvas;
+      color: CanvasText;
+    }
+    .CodeMirror {
+      height: 100vh;
+      background: Canvas;
+      color: CanvasText;
+      font-family: var(--editor-font-family, -apple-system);
+      font-size: var(--editor-font-size, 14px);
+      line-height: var(--editor-line-height, 1.5);
+    }
+    .CodeMirror-scroll {
+      overflow: auto !important;
+    }
+    .CodeMirror-lines {
+      padding: 16px 18px;
+    }
+    .CodeMirror pre,
+    .CodeMirror-line,
+    .CodeMirror-line-like {
+      line-height: var(--editor-line-height, 1.5);
+    }
+    .CodeMirror-gutters {
+      display: none;
+      background: transparent;
+      border: 0;
+    }
+    .CodeMirror-cursor {
+      border-left-color: CanvasText !important;
+      transform: scaleY(0.72);
+      transform-origin: center;
+    }
+    .CodeMirror-selected {
+      background: color-mix(in srgb, AccentColor 35%, transparent) !important;
+    }
+    .CodeMirror-focused .CodeMirror-selected {
+      background: color-mix(in srgb, AccentColor 55%, transparent) !important;
+    }
+    .CodeMirror-selection-background {
+      background: color-mix(in srgb, AccentColor 55%, transparent) !important;
+    }
+    .CodeMirror-placeholder {
+      color: color-mix(in srgb, CanvasText 45%, transparent) !important;
+    }
+  </style>
+</head>
+<body>
+  <textarea id="source"></textarea>
+  <script src="codemirror/lib/codemirror.min.js"></script>
+  <script src="codemirror/addon/display/placeholder.min.js"></script>
+  <script>
+    const source = document.getElementById("source");
+    const wrapper = document.documentElement;
+    let suppressSend = false;
+
+    const editor = CodeMirror.fromTextArea(source, {
+      lineWrapping: true,
+      placeholder: "New note...",
+      viewportMargin: Infinity
+    });
+
+    editor.on("changes", () => {
+      if (suppressSend) return;
+      window.webkit.messageHandlers.notepadTextChanged.postMessage(editor.getValue());
+    });
+
+    function applyConfig(config) {
+      wrapper.style.setProperty("--editor-font-family", config.fontFamily);
+      wrapper.style.setProperty("--editor-font-size", `${config.fontSize}px`);
+      wrapper.style.setProperty("--editor-line-height", `${config.lineHeight}`);
+      editor.setOption("lineWrapping", config.wordWrap);
+      editor.refresh();
+    }
+
+    window.notepad = {
+      applyState(state) {
+        applyConfig(state.preferences);
+        if (editor.getValue() !== state.text) {
+          const selections = editor.listSelections();
+          suppressSend = true;
+          editor.setValue(state.text);
+          if (selections && selections.length > 0) {
+            try {
+              editor.setSelections(selections);
+            } catch (_) {}
+          }
+          suppressSend = false;
+        }
+      },
+      focusEditor() {
+        editor.focus();
+      }
+    };
+
+    requestAnimationFrame(() => {
+      window.notepad.focusEditor();
+    });
+  </script>
+</body>
+</html>

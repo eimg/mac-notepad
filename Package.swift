@@ -10,7 +10,10 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "Notepad"
+            name: "Notepad",
+            resources: [
+                .copy("Resources"),
+            ]
         ),
         .testTarget(
             name: "NotepadTests",

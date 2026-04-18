@@ -28,12 +28,18 @@ private struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             TabStripView()
+            if editor.searchPanel.isVisible {
+                SearchBarView()
+            }
             PlainTextEditorView(
                 text: Binding(
                     get: { editor.currentDocument.text },
                     set: { editor.updateText($0) }
                 ),
-                preferences: editor.preferences
+                preferences: editor.preferences,
+                searchPanel: editor.searchPanel,
+                searchCommand: editor.searchCommand,
+                searchCommandNonce: editor.searchCommandNonce
             )
         }
         .overlay {
@@ -140,6 +146,36 @@ private struct NotepadCommands: Commands {
 
             Toggle("Word Wrap", isOn: wrapBinding)
         }
+
+        CommandGroup(after: .textEditing) {
+            Divider()
+
+            Button("Find") {
+                openMainWindow()
+                editor.showSearch(prefillFromSelection: true)
+            }
+            .keyboardShortcut("f")
+
+            Button("Find Next") {
+                openMainWindow()
+                editor.findNext()
+            }
+            .keyboardShortcut("g")
+            .disabled(editor.searchPanel.query.isEmpty)
+
+            Button("Find Previous") {
+                openMainWindow()
+                editor.findPrevious()
+            }
+            .keyboardShortcut("G", modifiers: [.command, .shift])
+            .disabled(editor.searchPanel.query.isEmpty)
+
+            Button("Replace") {
+                openMainWindow()
+                editor.showSearch(prefillFromSelection: true)
+            }
+            .keyboardShortcut("f", modifiers: [.command, .option])
+        }
     }
 
     private var fontBinding: Binding<String> {
@@ -159,6 +195,127 @@ private struct NotepadCommands: Commands {
     private func openMainWindow() {
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: mainWindowID)
+    }
+}
+
+private struct SearchBarView: View {
+    @EnvironmentObject private var editor: EditorViewModel
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            fullSearchControls
+            compactSearchControls
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onExitCommand {
+            editor.hideSearch(reset: true)
+        }
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+
+    private var fullSearchControls: some View {
+        HStack(spacing: 10) {
+            Spacer(minLength: 0)
+            searchFields
+            searchButtons
+            closeButton
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private var compactSearchControls: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                searchFields
+                searchButtons
+                closeButton
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+
+    private var searchFields: some View {
+        Group {
+            SearchInputField(
+                title: "Find",
+                text: Binding(
+                    get: { editor.searchPanel.query },
+                    set: { editor.setSearchQuery($0) }
+                )
+            )
+            .frame(width: 220)
+
+            SearchInputField(
+                title: "Replace",
+                text: Binding(
+                    get: { editor.searchPanel.replacement },
+                    set: { editor.setReplacementText($0) }
+                )
+            )
+            .frame(width: 220)
+        }
+    }
+
+    private var searchButtons: some View {
+        Group {
+            Button("Prev") {
+                editor.findPrevious()
+            }
+            .disabled(editor.searchPanel.query.isEmpty)
+
+            Button("Next") {
+                editor.findNext()
+            }
+            .disabled(editor.searchPanel.query.isEmpty)
+
+            Button("Replace") {
+                editor.replaceCurrent()
+            }
+            .disabled(editor.searchPanel.query.isEmpty)
+
+            Button("Replace All") {
+                editor.replaceAll()
+            }
+            .disabled(editor.searchPanel.query.isEmpty)
+        }
+    }
+
+    private var closeButton: some View {
+        Button {
+            editor.hideSearch(reset: true)
+        } label: {
+            Image(systemName: "xmark")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+    }
+}
+
+private struct SearchInputField: View {
+    let title: String
+    @Binding var text: String
+
+    var body: some View {
+        TextField(title, text: $text)
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .textBackgroundColor))
+                    .allowsHitTesting(false)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.75), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
     }
 }
 

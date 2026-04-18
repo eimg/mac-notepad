@@ -5,6 +5,9 @@ import WebKit
 struct PlainTextEditorView: NSViewRepresentable {
     @Binding var text: String
     let preferences: EditorPreferences
+    let searchPanel: SearchPanelState
+    let searchCommand: SearchCommand?
+    let searchCommandNonce: Int
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -14,11 +17,16 @@ struct PlainTextEditorView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.userContentController.add(context.coordinator, name: Coordinator.handlerName)
+        configuration.userContentController.add(context.coordinator, name: Coordinator.selectionHandlerName)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
-        webView.loadHTMLString(Self.html, baseURL: nil)
+
+        if let editorURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
+            webView.loadFileURL(editorURL, allowingReadAccessTo: editorURL.deletingLastPathComponent())
+        }
+
         return webView
     }
 
@@ -28,100 +36,23 @@ struct PlainTextEditorView: NSViewRepresentable {
             text: text,
             preferences: preferences
         )
+        context.coordinator.applySearchIfNeeded(
+            to: webView,
+            panel: searchPanel,
+            command: searchCommand,
+            nonce: searchCommandNonce
+        )
     }
-
-    static let html = """
-    <!doctype html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <style>
-        :root { color-scheme: light dark; }
-        html, body {
-          margin: 0;
-          width: 100%;
-          height: 100%;
-          background: transparent;
-        }
-        textarea {
-          box-sizing: border-box;
-          width: 100%;
-          height: 100%;
-          border: 0;
-          outline: none;
-          resize: none;
-          margin: 0;
-          padding: 16px 18px;
-          background: Canvas;
-          color: CanvasText;
-          caret-color: AccentColor;
-          white-space: pre-wrap;
-          overflow-wrap: break-word;
-          tab-size: 4;
-          spellcheck: false;
-        }
-        textarea::placeholder {
-          color: color-mix(in srgb, CanvasText 45%, transparent);
-        }
-      </style>
-    </head>
-    <body>
-      <textarea id="editor" placeholder="New note..."></textarea>
-      <script>
-        const editor = document.getElementById("editor");
-        let suppressSend = false;
-
-        function sendValue() {
-          if (suppressSend) return;
-          window.webkit.messageHandlers.notepadTextChanged.postMessage(editor.value);
-        }
-
-        function applyConfig(config) {
-          editor.style.fontFamily = config.fontFamily;
-          editor.style.fontSize = `${config.fontSize}px`;
-          editor.style.lineHeight = `${config.lineHeight}`;
-          editor.style.whiteSpace = config.wordWrap ? "pre-wrap" : "pre";
-          editor.style.overflowWrap = config.wordWrap ? "break-word" : "normal";
-          editor.style.overflowX = config.wordWrap ? "hidden" : "auto";
-          editor.wrap = config.wordWrap ? "soft" : "off";
-        }
-
-        editor.addEventListener("input", sendValue);
-
-        window.notepad = {
-          applyState(state) {
-            applyConfig(state.preferences);
-            if (editor.value !== state.text) {
-              const start = editor.selectionStart;
-              const end = editor.selectionEnd;
-              suppressSend = true;
-              editor.value = state.text;
-              const next = Math.min(start, editor.value.length);
-              const nextEnd = Math.min(end, editor.value.length);
-              editor.setSelectionRange(next, nextEnd);
-              suppressSend = false;
-            }
-          },
-          focusEditor() {
-            editor.focus();
-          }
-        };
-
-        requestAnimationFrame(() => {
-          window.notepad.focusEditor();
-        });
-      </script>
-    </body>
-    </html>
-    """
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         static let handlerName = "notepadTextChanged"
+        static let selectionHandlerName = "notepadSelection"
 
         private var text: Binding<String>
         private var pageLoaded = false
         private var lastRenderedState: RenderState?
+        private var lastSearchCommandNonce = -1
+        private var lastSearchPanel = SearchPanelState()
 
         init(text: Binding<String>) {
             self.text = text
@@ -134,13 +65,18 @@ struct PlainTextEditorView: NSViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == Self.handlerName, let value = message.body as? String else { return }
-            if text.wrappedValue != value {
-                text.wrappedValue = value
-            }
-            if var currentState = lastRenderedState {
-                currentState.text = value
-                lastRenderedState = currentState
+            if message.name == Self.handlerName, let value = message.body as? String {
+                if text.wrappedValue != value {
+                    text.wrappedValue = value
+                }
+                if var currentState = lastRenderedState {
+                    currentState.text = value
+                    lastRenderedState = currentState
+                }
+            } else if message.name == Self.selectionHandlerName, let value = message.body as? String {
+                Task { @MainActor in
+                    EditorViewModel.shared.useSelectionForSearch(value)
+                }
             }
         }
 
@@ -165,6 +101,34 @@ struct PlainTextEditorView: NSViewRepresentable {
                 .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
 
             webView.evaluateJavaScript("window.notepad.applyState(JSON.parse('\(escapedJSON)'));")
+        }
+
+        func applySearchIfNeeded(to webView: WKWebView, panel: SearchPanelState, command: SearchCommand?, nonce: Int) {
+            guard pageLoaded else { return }
+
+            if panel != lastSearchPanel {
+                lastSearchPanel = panel
+                if let queryJSON = Self.escapeForJavaScriptString(panel.query),
+                   let replacementJSON = Self.escapeForJavaScriptString(panel.replacement) {
+                    webView.evaluateJavaScript("window.notepad.updateSearch('\(queryJSON)', '\(replacementJSON)');")
+                }
+            }
+
+            guard nonce != lastSearchCommandNonce, let command else { return }
+            lastSearchCommandNonce = nonce
+            webView.evaluateJavaScript("window.notepad.runSearchCommand('\(command.rawValue)');")
+        }
+
+        private static func escapeForJavaScriptString(_ value: String) -> String? {
+            let data = try? JSONEncoder().encode(value)
+            guard let json = data.flatMap({ String(data: $0, encoding: .utf8) }) else { return nil }
+            return json.dropFirst().dropLast()
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "'", with: "\\'")
+                .replacingOccurrences(of: "\n", with: "\\n")
+                .replacingOccurrences(of: "\r", with: "\\r")
+                .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+                .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
         }
     }
 

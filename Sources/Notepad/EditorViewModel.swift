@@ -9,6 +9,9 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var documents = [EditorDocumentState()]
     @Published private(set) var selectedDocumentID: UUID
     @Published private(set) var preferences: EditorPreferences
+    @Published private(set) var searchPanel = SearchPanelState()
+    @Published private(set) var searchCommandNonce = 0
+    @Published private(set) var searchCommand: SearchCommand?
 
     private let defaults: UserDefaults
     private weak var trackedWindow: NSWindow?
@@ -55,6 +58,9 @@ final class EditorViewModel: ObservableObject {
 
     func selectDocument(_ id: UUID) {
         guard documents.contains(where: { $0.id == id }) else { return }
+        if selectedDocumentID != id {
+            hideSearch(reset: true)
+        }
         selectedDocumentID = id
         updateWindowState()
     }
@@ -88,7 +94,52 @@ final class EditorViewModel: ObservableObject {
         persistPreferences()
     }
 
+    func showSearch(prefillFromSelection: Bool = false) {
+        searchPanel.isVisible = true
+        if prefillFromSelection {
+            issueSearchCommand(.useSelectionForFind)
+        }
+    }
+
+    func hideSearch(reset: Bool = false) {
+        searchPanel.isVisible = false
+        if reset {
+            searchPanel.query = ""
+            searchPanel.replacement = ""
+        }
+    }
+
+    func setSearchQuery(_ value: String) {
+        searchPanel.query = value
+    }
+
+    func useSelectionForSearch(_ value: String) {
+        guard !value.isEmpty else { return }
+        searchPanel.query = value
+    }
+
+    func setReplacementText(_ value: String) {
+        searchPanel.replacement = value
+    }
+
+    func findNext() {
+        issueSearchCommand(.findNext)
+    }
+
+    func findPrevious() {
+        issueSearchCommand(.findPrevious)
+    }
+
+    func replaceCurrent() {
+        issueSearchCommand(.replaceCurrent)
+    }
+
+    func replaceAll() {
+        issueSearchCommand(.replaceAll)
+    }
+
     func newDocument() {
+        hideSearch(reset: true)
         let newDocument = EditorDocumentState()
         documents.append(newDocument)
         selectedDocumentID = newDocument.id
@@ -272,6 +323,11 @@ final class EditorViewModel: ObservableObject {
         defaults.set(preferences.fontSize, forKey: DefaultsKey.fontSize)
         defaults.set(preferences.lineHeightMultiple, forKey: DefaultsKey.lineHeightMultiple)
         defaults.set(preferences.wordWrap, forKey: DefaultsKey.wordWrap)
+    }
+
+    private func issueSearchCommand(_ command: SearchCommand) {
+        searchCommand = command
+        searchCommandNonce += 1
     }
 
     private var shouldReuseInitialDocument: Bool {

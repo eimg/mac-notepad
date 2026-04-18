@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 final class EditorViewModel: ObservableObject {
@@ -82,6 +83,11 @@ final class EditorViewModel: ObservableObject {
         persistPreferences()
     }
 
+    func resetFormatting() {
+        preferences = .default
+        persistPreferences()
+    }
+
     func newDocument() {
         let newDocument = EditorDocumentState()
         documents.append(newDocument)
@@ -120,6 +126,27 @@ final class EditorViewModel: ObservableObject {
         for url in urls {
             openDocument(at: url)
         }
+    }
+
+    func openDroppedItems(from providers: [NSItemProvider]) -> Bool {
+        let fileURLType = UTType.fileURL.identifier
+        let matchingProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(fileURLType) }
+        guard !matchingProviders.isEmpty else { return false }
+
+        for provider in matchingProviders {
+            provider.loadItem(forTypeIdentifier: fileURLType, options: nil) { item, _ in
+                guard let data = item as? Data,
+                      let url = URL(dataRepresentation: data, relativeTo: nil),
+                      url.pathExtension.lowercased() == "txt"
+                else { return }
+
+                DispatchQueue.main.async {
+                    self.openDocument(at: url)
+                }
+            }
+        }
+
+        return true
     }
 
     @discardableResult
@@ -235,7 +262,7 @@ final class EditorViewModel: ObservableObject {
     }
 
     private func updateWindowState() {
-        trackedWindow?.title = currentDocument.displayTitle
+        trackedWindow?.title = "Notepad"
         trackedWindow?.representedURL = currentDocument.fileURL
         trackedWindow?.isDocumentEdited = currentDocument.isDirty
     }

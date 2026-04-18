@@ -67,7 +67,7 @@ struct PlainTextEditorView: NSViewRepresentable {
       </style>
     </head>
     <body>
-      <textarea id="editor" placeholder="Untitled"></textarea>
+      <textarea id="editor" placeholder="New note..."></textarea>
       <script>
         const editor = document.getElementById("editor");
         let suppressSend = false;

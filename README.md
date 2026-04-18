@@ -23,6 +23,16 @@ swift test
 open dist/Notepad.app
 ```
 
+## Quick Test
+
+If you just want to try the app without building it yourself, the repository also includes a ready-to-run copy at `dist/Notepad.app`.
+
+After cloning the repo:
+
+```bash
+open dist/Notepad.app
+```
+
 ## Tech
 
 - Swift Package Manager

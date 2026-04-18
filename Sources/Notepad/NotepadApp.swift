@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 private let mainWindowID = "main-window"
 
@@ -22,6 +23,7 @@ struct NotepadApp: App {
 
 private struct ContentView: View {
     @EnvironmentObject private var editor: EditorViewModel
+    @State private var isDropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +35,17 @@ private struct ContentView: View {
                 ),
                 preferences: editor.preferences
             )
+        }
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentColor.opacity(0.7), style: StrokeStyle(lineWidth: 2, dash: [8, 8]))
+                    .padding(12)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
+            editor.openDroppedItems(from: providers)
         }
     }
 }
@@ -116,6 +129,12 @@ private struct NotepadCommands: Commands {
                 editor.adjustLineHeight(by: -0.04)
             }
             .keyboardShortcut("[", modifiers: [.command, .option])
+
+            Divider()
+
+            Button("Reset Formatting") {
+                editor.resetFormatting()
+            }
 
             Divider()
 

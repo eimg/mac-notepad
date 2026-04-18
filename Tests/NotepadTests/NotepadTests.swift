@@ -5,7 +5,7 @@ import Testing
 @MainActor
 @Test func documentStateTracksDirtyFlagAndTitle() async throws {
     var state = EditorDocumentState()
-    #expect(state.displayTitle == "Untitled")
+    #expect(state.displayTitle == "New note")
     #expect(!state.isDirty)
 
     state.text = "hello"
@@ -31,6 +31,22 @@ import Testing
     #expect(model.preferences.fontSize == 18.0)
     #expect(model.preferences.lineHeightMultiple == 1.3)
     #expect(model.preferences.wordWrap == false)
+}
+
+@MainActor
+@Test func resetFormattingRestoresDefaults() async throws {
+    let defaults = UserDefaults(suiteName: "NotepadTests.resetFormatting")!
+    defaults.removePersistentDomain(forName: "NotepadTests.resetFormatting")
+
+    let model = EditorViewModel(defaults: defaults)
+    model.setFontName("Helvetica")
+    model.adjustFontSize(by: 4)
+    model.adjustLineHeight(by: 0.12)
+    model.setWordWrap(false)
+
+    model.resetFormatting()
+
+    #expect(model.preferences == .default)
 }
 
 @Test func readsUTF8TextFiles() async throws {

@@ -18,6 +18,6 @@ struct EditorDocumentState: Equatable {
     }
 
     var displayTitle: String {
-        fileURL?.lastPathComponent ?? "Untitled"
+        fileURL?.lastPathComponent ?? "New note"
     }
 }

@@ -21,7 +21,7 @@ struct EditorPreferences: Equatable {
     static let `default` = EditorPreferences(
         fontName: "Menlo",
         fontSize: 14,
-        lineHeightMultiple: 1.5,
+        lineHeightMultiple: 2.0,
         wordWrap: true
     )
 

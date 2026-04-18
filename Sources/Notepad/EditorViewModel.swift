@@ -77,7 +77,7 @@ final class EditorViewModel: ObservableObject {
     }
 
     func adjustLineHeight(by delta: Double) {
-        let newValue = min(max(preferences.lineHeightMultiple + delta, 1.0), 1.8)
+        let newValue = min(max(preferences.lineHeightMultiple + delta, 1.5), 3.5)
         guard newValue != preferences.lineHeightMultiple else { return }
         preferences.lineHeightMultiple = (newValue * 100).rounded() / 100
         persistPreferences()

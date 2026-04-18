@@ -64,10 +64,13 @@
   <textarea id="source"></textarea>
   <script src="codemirror/lib/codemirror.min.js"></script>
   <script src="codemirror/addon/display/placeholder.min.js"></script>
+  <script src="codemirror/addon/search/searchcursor.js"></script>
   <script>
     const source = document.getElementById("source");
     const wrapper = document.documentElement;
     let suppressSend = false;
+    let searchQuery = "";
+    let replacementText = "";
 
     const editor = CodeMirror.fromTextArea(source, {
       lineWrapping: true,
@@ -88,6 +91,56 @@
       editor.refresh();
     }
 
+    function normalizeLineEndings(value) {
+      return value.replace(/\r\n/g, "\n");
+    }
+
+    function focusAndReveal(from, to) {
+      editor.focus();
+      editor.setSelection(from, to);
+      editor.scrollIntoView({from, to}, 60);
+    }
+
+    function getCursorForDirection(reverse) {
+      const cursor = editor.getSearchCursor(searchQuery, reverse ? editor.getCursor("from") : editor.getCursor("to"));
+      if (cursor.find(reverse)) return cursor;
+
+      const wrapped = editor.getSearchCursor(searchQuery, reverse ? CodeMirror.Pos(editor.lastLine()) : CodeMirror.Pos(0, 0));
+      return wrapped.find(reverse) ? wrapped : null;
+    }
+
+    function find(reverse = false) {
+      if (!searchQuery) return;
+      const cursor = getCursorForDirection(reverse);
+      if (!cursor) return;
+      focusAndReveal(cursor.from(), cursor.to());
+    }
+
+    function replaceCurrent() {
+      if (!searchQuery) return;
+      const selection = editor.getSelection();
+      if (selection !== searchQuery) {
+        find(false);
+      }
+      if (editor.getSelection() === searchQuery) {
+        editor.replaceSelection(replacementText);
+      }
+      find(false);
+    }
+
+    function replaceAll() {
+      if (!searchQuery) return;
+      const cursor = editor.getSearchCursor(searchQuery, CodeMirror.Pos(0, 0));
+      const replacements = [];
+      while (cursor.findNext()) {
+        replacements.push({from: cursor.from(), to: cursor.to()});
+      }
+      for (let i = replacements.length - 1; i >= 0; i -= 1) {
+        const match = replacements[i];
+        editor.replaceRange(replacementText, match.from, match.to);
+      }
+    }
+
     window.notepad = {
       applyState(state) {
         applyConfig(state.preferences);
@@ -101,6 +154,29 @@
             } catch (_) {}
           }
           suppressSend = false;
+        }
+      },
+      updateSearch(query, replacement) {
+        searchQuery = normalizeLineEndings(query);
+        replacementText = normalizeLineEndings(replacement);
+      },
+      runSearchCommand(command) {
+        switch (command) {
+          case "useSelectionForFind":
+            window.webkit.messageHandlers.notepadSelection.postMessage(editor.getSelection());
+            break;
+          case "findNext":
+            find(false);
+            break;
+          case "findPrevious":
+            find(true);
+            break;
+          case "replaceCurrent":
+            replaceCurrent();
+            break;
+          case "replaceAll":
+            replaceAll();
+            break;
         }
       },
       focusEditor() {

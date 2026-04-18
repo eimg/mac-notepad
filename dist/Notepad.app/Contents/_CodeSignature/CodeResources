@@ -12,6 +12,10 @@
 		<data>
 		hWHynDTm/Z9yK0HjK/GJhBDXyPk=
 		</data>
+		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/addon/search/searchcursor.js</key>
+		<data>
+		a8TDbqI8579YP5W6StSeWZvGRqE=
+		</data>
 		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/lib/codemirror.min.css</key>
 		<data>
 		9yoV+yqJwJ/A7CxSFeDCo7KZtdo=
@@ -22,7 +26,7 @@
 		</data>
 		<key>Resources/Notepad_Notepad.bundle/Resources/editor.html</key>
 		<data>
-		n8vCsRuZnzt8Ci0nT/gKGd4sr88=
+		TxjTXyqLWY+ayNynoh+YJeMtsaE=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -39,6 +43,13 @@
 			<key>hash2</key>
 			<data>
 			YOAtF4Drijwzf51lrzIpxec5AsB+IezotoI++4OZDvI=
+			</data>
+		</dict>
+		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/addon/search/searchcursor.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			LAuM2P58pcoiU/SqzJFLOQv/WzysNHXfZsQ6nqjIzL4=
 			</data>
 		</dict>
 		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/lib/codemirror.min.css</key>
@@ -59,7 +70,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			exEu8SB4Ekw7waUlzFfN6J3lna/LXROGMicvWCqQnMM=
+			Mcwy29iO8/MQnadpk+e64OYL46ekFBe983Otq0lPTVQ=
 			</data>
 		</dict>
 	</dict>

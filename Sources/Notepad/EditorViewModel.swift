@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class EditorViewModel: ObservableObject {
     static let shared = EditorViewModel()
+    static let maxDocumentCount = 5
 
     @Published private(set) var documents = [EditorDocumentState()]
     @Published private(set) var selectedDocumentID: UUID
@@ -12,6 +13,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var searchPanel = SearchPanelState()
     @Published private(set) var searchCommandNonce = 0
     @Published private(set) var searchCommand: SearchCommand?
+    @Published var isSearchPopoverPresented = false
 
     private let defaults: UserDefaults
     private weak var trackedWindow: NSWindow?
@@ -35,6 +37,10 @@ final class EditorViewModel: ObservableObject {
         currentDocument.fileURL != nil || !currentDocument.text.isEmpty
     }
 
+    var canCreateNewDocument: Bool {
+        documents.count < Self.maxDocumentCount
+    }
+
     var selectedTabIndex: Int {
         documents.firstIndex(where: { $0.id == selectedDocumentID }) ?? 0
     }
@@ -42,6 +48,14 @@ final class EditorViewModel: ObservableObject {
     var currentDocument: EditorDocumentState {
         get { documents[selectedTabIndex] }
         set { documents[selectedTabIndex] = newValue }
+    }
+
+    func document(id: UUID) -> EditorDocumentState? {
+        documents.first { $0.id == id }
+    }
+
+    func text(for documentID: UUID) -> String {
+        document(id: documentID)?.text ?? ""
     }
 
     func attachWindow(_ window: NSWindow) {
@@ -53,6 +67,13 @@ final class EditorViewModel: ObservableObject {
     func updateText(_ text: String) {
         guard currentDocument.text != text else { return }
         currentDocument.text = text
+        updateWindowState()
+    }
+
+    func updateText(_ text: String, for documentID: UUID) {
+        guard let index = documents.firstIndex(where: { $0.id == documentID }) else { return }
+        guard documents[index].text != text else { return }
+        documents[index].text = text
         updateWindowState()
     }
 
@@ -96,13 +117,23 @@ final class EditorViewModel: ObservableObject {
 
     func showSearch(prefillFromSelection: Bool = false) {
         searchPanel.isVisible = true
+        isSearchPopoverPresented = true
         if prefillFromSelection {
             issueSearchCommand(.useSelectionForFind)
         }
     }
 
+    func toggleSearch(prefillFromSelection: Bool = false) {
+        if searchPanel.isVisible {
+            hideSearch(reset: false)
+        } else {
+            showSearch(prefillFromSelection: prefillFromSelection)
+        }
+    }
+
     func hideSearch(reset: Bool = false) {
         searchPanel.isVisible = false
+        isSearchPopoverPresented = false
         if reset {
             searchPanel.query = ""
             searchPanel.replacement = ""
@@ -139,6 +170,11 @@ final class EditorViewModel: ObservableObject {
     }
 
     func newDocument() {
+        guard canCreateNewDocument else {
+            NSSound.beep()
+            return
+        }
+
         hideSearch(reset: true)
         let newDocument = EditorDocumentState()
         documents.append(newDocument)
@@ -158,8 +194,13 @@ final class EditorViewModel: ObservableObject {
 
     func openDocument(at url: URL) {
         do {
+            let standardizedURL = url.standardizedFileURL
+            if selectOpenDocument(at: standardizedURL) {
+                return
+            }
+
             let contents = try Self.readPlainText(from: url)
-            let openedDocument = EditorDocumentState(fileURL: url, text: contents, savedText: contents)
+            let openedDocument = EditorDocumentState(fileURL: standardizedURL, text: contents, savedText: contents)
             if shouldReuseInitialDocument {
                 documents[0] = openedDocument
                 selectedDocumentID = openedDocument.id
@@ -335,6 +376,16 @@ final class EditorViewModel: ObservableObject {
         currentDocument.fileURL == nil &&
         currentDocument.text.isEmpty &&
         !currentDocument.isDirty
+    }
+
+    private func selectOpenDocument(at url: URL) -> Bool {
+        guard let document = documents.first(where: { $0.fileURL?.standardizedFileURL == url }) else {
+            return false
+        }
+
+        selectedDocumentID = document.id
+        updateWindowState()
+        return true
     }
 
     private static func loadPreferences(from defaults: UserDefaults) -> EditorPreferences {

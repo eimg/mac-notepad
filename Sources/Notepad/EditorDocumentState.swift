@@ -1,6 +1,6 @@
 import Foundation
 
-struct EditorDocumentState: Equatable {
+struct EditorDocumentState: Equatable, Identifiable {
     let id: UUID
     var fileURL: URL?
     var text: String

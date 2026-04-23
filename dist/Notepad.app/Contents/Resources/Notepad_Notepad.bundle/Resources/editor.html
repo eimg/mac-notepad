@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="codemirror/lib/codemirror.min.css">
   <style>
-    :root { color-scheme: light dark; }
+    :root {
+      color-scheme: light dark;
+      --editor-selection-background: color-mix(in srgb, AccentColor 50%, Canvas);
+    }
     html, body {
       margin: 0;
       width: 100%;
@@ -48,13 +51,25 @@
       transform-origin: center;
     }
     .CodeMirror-selected {
-      background: color-mix(in srgb, AccentColor 35%, transparent) !important;
+      background: var(--editor-selection-background) !important;
     }
     .CodeMirror-focused .CodeMirror-selected {
-      background: color-mix(in srgb, AccentColor 55%, transparent) !important;
+      background: var(--editor-selection-background) !important;
     }
-    .CodeMirror-selection-background {
-      background: color-mix(in srgb, AccentColor 55%, transparent) !important;
+    .CodeMirror-line::selection,
+    .CodeMirror-line > span::selection,
+    .CodeMirror-line > span > span::selection,
+    span.CodeMirror-selectedtext::selection {
+      background: var(--editor-selection-background) !important;
+    }
+    .CodeMirror-line::-moz-selection,
+    .CodeMirror-line > span::-moz-selection,
+    .CodeMirror-line > span > span::-moz-selection,
+    span.CodeMirror-selectedtext::-moz-selection {
+      background: var(--editor-selection-background) !important;
+    }
+    span.CodeMirror-selectedtext {
+      background: transparent !important;
     }
     .CodeMirror-placeholder {
       color: color-mix(in srgb, CanvasText 45%, transparent) !important;
@@ -74,6 +89,7 @@
     let replacementText = "";
 
     const editor = CodeMirror.fromTextArea(source, {
+      dragDrop: false,
       lineWrapping: true,
       placeholder: "New note...",
       viewportMargin: Infinity

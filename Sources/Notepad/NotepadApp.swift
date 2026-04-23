@@ -13,7 +13,9 @@ struct NotepadApp: App {
             ContentView()
                 .environmentObject(editor)
                 .background(WindowAccessor())
+                .background(CursorResetView())
                 .frame(minWidth: 500, minHeight: 360)
+                .nativeToolbarTitleHidden()
         }
         .commands {
             NotepadCommands(editor: editor, mainWindowID: mainWindowID)
@@ -26,21 +28,18 @@ private struct ContentView: View {
     @State private var isDropTargeted = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            TabStripView()
-            if editor.searchPanel.isVisible {
-                SearchBarView()
+        TabView(selection: selectedDocument) {
+            ForEach(editor.documents) { document in
+                DocumentEditorView(documentID: document.id)
+                    .tabItem {
+                        Label(tabTitle(for: document), systemImage: document.isDirty ? "circle.fill" : "doc.plaintext")
+                    }
+                    .tag(document.id)
             }
-            PlainTextEditorView(
-                text: Binding(
-                    get: { editor.currentDocument.text },
-                    set: { editor.updateText($0) }
-                ),
-                preferences: editor.preferences,
-                searchPanel: editor.searchPanel,
-                searchCommand: editor.searchCommand,
-                searchCommandNonce: editor.searchCommandNonce
-            )
+        }
+        .tabViewStyle(.automatic)
+        .toolbar {
+            NativeEditorToolbar()
         }
         .overlay {
             if isDropTargeted {
@@ -52,6 +51,79 @@ private struct ContentView: View {
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
             editor.openDroppedItems(from: providers)
+        }
+    }
+
+    private var selectedDocument: Binding<UUID> {
+        Binding(
+            get: { editor.selectedDocumentID },
+            set: { editor.selectDocument($0) }
+        )
+    }
+
+    private func tabTitle(for document: EditorDocumentState) -> String {
+        document.isDirty ? "\(document.displayTitle) ⦁" : document.displayTitle
+    }
+}
+
+private struct DocumentEditorView: View {
+    @EnvironmentObject private var editor: EditorViewModel
+
+    let documentID: UUID
+
+    var body: some View {
+        PlainTextEditorView(
+            text: Binding(
+                get: { editor.text(for: documentID) },
+                set: { editor.updateText($0, for: documentID) }
+            ),
+            preferences: editor.preferences,
+            searchPanel: editor.selectedDocumentID == documentID ? editor.searchPanel : SearchPanelState(),
+            searchCommand: editor.selectedDocumentID == documentID ? editor.searchCommand : nil,
+            searchCommandNonce: editor.searchCommandNonce
+        )
+    }
+}
+
+private struct NativeEditorToolbar: ToolbarContent {
+    @EnvironmentObject private var editor: EditorViewModel
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button {
+                editor.newDocument()
+            } label: {
+                Label("New Tab", systemImage: "plus")
+            }
+            .disabled(!editor.canCreateNewDocument)
+            .help("New Tab")
+        }
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button {
+                editor.adjustFontSize(by: -1)
+            } label: {
+                Label("Decrease Font Size", systemImage: "textformat.size.smaller")
+            }
+            .help("Decrease Font Size")
+
+            Button {
+                editor.adjustFontSize(by: 1)
+            } label: {
+                Label("Increase Font Size", systemImage: "textformat.size.larger")
+            }
+            .help("Increase Font Size")
+
+            Button {
+                editor.showSearch(prefillFromSelection: true)
+            } label: {
+                Label("Find", systemImage: "magnifyingglass")
+            }
+            .help("Find")
+            .popover(isPresented: $editor.isSearchPopoverPresented, arrowEdge: .top) {
+                SearchPopoverView()
+                    .environmentObject(editor)
+            }
         }
     }
 }
@@ -69,12 +141,14 @@ private struct NotepadCommands: Commands {
                 editor.newDocument()
             }
             .keyboardShortcut("n")
+            .disabled(!editor.canCreateNewDocument)
 
             Button("New Tab") {
                 openMainWindow()
                 editor.newDocument()
             }
             .keyboardShortcut("t")
+            .disabled(!editor.canCreateNewDocument)
 
             Button("Open...") {
                 openMainWindow()
@@ -198,50 +272,11 @@ private struct NotepadCommands: Commands {
     }
 }
 
-private struct SearchBarView: View {
+private struct SearchPopoverView: View {
     @EnvironmentObject private var editor: EditorViewModel
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            fullSearchControls
-            compactSearchControls
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .onExitCommand {
-            editor.hideSearch(reset: true)
-        }
-        .overlay(alignment: .bottom) {
-            Divider()
-        }
-    }
-
-    private var fullSearchControls: some View {
-        HStack(spacing: 10) {
-            Spacer(minLength: 0)
-            searchFields
-            searchButtons
-            closeButton
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-    }
-
-    private var compactSearchControls: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                searchFields
-                searchButtons
-                closeButton
-            }
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, alignment: .center)
-        }
-    }
-
-    private var searchFields: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 12) {
             SearchInputField(
                 title: "Find",
                 text: Binding(
@@ -249,7 +284,6 @@ private struct SearchBarView: View {
                     set: { editor.setSearchQuery($0) }
                 )
             )
-            .frame(width: 220)
 
             SearchInputField(
                 title: "Replace",
@@ -258,42 +292,41 @@ private struct SearchBarView: View {
                     set: { editor.setReplacementText($0) }
                 )
             )
-            .frame(width: 220)
+
+            HStack(spacing: 8) {
+                Button {
+                    editor.findPrevious()
+                } label: {
+                    Label("Previous", systemImage: "chevron.up")
+                }
+                .labelStyle(.iconOnly)
+                .help("Find Previous")
+
+                Button {
+                    editor.findNext()
+                } label: {
+                    Label("Next", systemImage: "chevron.down")
+                }
+                .labelStyle(.iconOnly)
+                .help("Find Next")
+
+                Spacer(minLength: 8)
+
+                Button("Replace") {
+                    editor.replaceCurrent()
+                }
+
+                Button("Replace All") {
+                    editor.replaceAll()
+                }
+            }
+            .disabled(editor.searchPanel.query.isEmpty)
         }
-    }
-
-    private var searchButtons: some View {
-        Group {
-            Button("Prev") {
-                editor.findPrevious()
-            }
-            .disabled(editor.searchPanel.query.isEmpty)
-
-            Button("Next") {
-                editor.findNext()
-            }
-            .disabled(editor.searchPanel.query.isEmpty)
-
-            Button("Replace") {
-                editor.replaceCurrent()
-            }
-            .disabled(editor.searchPanel.query.isEmpty)
-
-            Button("Replace All") {
-                editor.replaceAll()
-            }
-            .disabled(editor.searchPanel.query.isEmpty)
-        }
-    }
-
-    private var closeButton: some View {
-        Button {
+        .padding(14)
+        .frame(width: 320)
+        .onExitCommand {
             editor.hideSearch(reset: true)
-        } label: {
-            Image(systemName: "xmark")
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
     }
 }
 
@@ -303,119 +336,18 @@ private struct SearchInputField: View {
 
     var body: some View {
         TextField(title, text: $text)
-            .textFieldStyle(.plain)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(nsColor: .textBackgroundColor))
-                    .allowsHitTesting(false)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.75), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
+            .textFieldStyle(.roundedBorder)
     }
 }
 
-private struct TabStripView: View {
-    @EnvironmentObject private var editor: EditorViewModel
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(editor.documents, id: \.id) { document in
-                    TabItemView(document: document)
-                }
-
-                Button {
-                    editor.newDocument()
-                } label: {
-                    Image(systemName: "plus")
-                        .padding(8)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.secondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+private extension View {
+    @ViewBuilder
+    func nativeToolbarTitleHidden() -> some View {
+        if #available(macOS 15.0, *) {
+            self.toolbar(removing: .title)
+        } else {
+            self
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .bottom) {
-            Divider()
-        }
-    }
-}
-
-private struct TabItemView: View {
-    @EnvironmentObject private var editor: EditorViewModel
-    @State private var isHovering = false
-
-    let document: EditorDocumentState
-
-    var body: some View {
-        let isActive = document.id == editor.selectedDocumentID
-
-        HStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Text(document.displayTitle)
-                    .lineLimit(1)
-                if document.isDirty {
-                    Circle()
-                        .fill(isActive ? Color.accentColor : Color.secondary)
-                        .frame(width: 7, height: 7)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if editor.documents.count > 1 {
-                Button {
-                    editor.closeDocument(id: document.id)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 18, height: 18)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .opacity(isActive || isHovering ? 0.9 : 0.45)
-            }
-        }
-        .foregroundStyle(isActive ? Color.primary : Color.secondary)
-        .padding(.leading, 12)
-        .padding(.trailing, editor.documents.count > 1 ? 8 : 12)
-        .padding(.vertical, 8)
-        .frame(minWidth: 120, maxWidth: 220)
-        .background(tabBackground(isActive: isActive))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(tabBorder(isActive: isActive), lineWidth: 1)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .onTapGesture {
-            editor.selectDocument(document.id)
-        }
-        .onHover { hovering in
-            isHovering = hovering
-        }
-    }
-
-    private func tabBackground(isActive: Bool) -> Color {
-        if isActive {
-            return Color(nsColor: .controlBackgroundColor)
-        }
-        if isHovering {
-            return Color(nsColor: .controlColor).opacity(0.45)
-        }
-        return Color(nsColor: .quaternaryLabelColor).opacity(0.08)
-    }
-
-    private func tabBorder(isActive: Bool) -> Color {
-        isActive
-            ? Color.accentColor.opacity(0.45)
-            : Color(nsColor: .separatorColor).opacity(0.55)
     }
 }
 

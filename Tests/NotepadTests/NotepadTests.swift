@@ -49,6 +49,29 @@ import Testing
     #expect(model.preferences == .default)
 }
 
+@MainActor
+@Test func openingSameFileSelectsExistingDocument() async throws {
+    let defaults = UserDefaults(suiteName: "NotepadTests.duplicateOpen")!
+    defaults.removePersistentDomain(forName: "NotepadTests.duplicateOpen")
+
+    let directory = FileManager.default.temporaryDirectory
+    let url = directory.appending(path: UUID().uuidString).appendingPathExtension("txt")
+    try "hello".write(to: url, atomically: true, encoding: .utf8)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let model = EditorViewModel(defaults: defaults)
+    model.openDocument(at: url)
+    let openedDocumentID = model.selectedDocumentID
+
+    model.newDocument()
+    #expect(model.documents.count == 2)
+
+    model.openDocument(at: url)
+
+    #expect(model.documents.count == 2)
+    #expect(model.selectedDocumentID == openedDocumentID)
+}
+
 @Test func readsUTF8TextFiles() async throws {
     let directory = FileManager.default.temporaryDirectory
     let url = directory.appending(path: UUID().uuidString).appendingPathExtension("txt")

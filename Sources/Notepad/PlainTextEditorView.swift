@@ -19,9 +19,10 @@ struct PlainTextEditorView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: Coordinator.handlerName)
         configuration.userContentController.add(context.coordinator, name: Coordinator.selectionHandlerName)
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = DroppingWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
+        webView.registerForDraggedTypes([.fileURL])
 
         if let editorURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
             webView.loadFileURL(editorURL, allowingReadAccessTo: editorURL.deletingLastPathComponent())
@@ -154,5 +155,32 @@ struct PlainTextEditorView: NSViewRepresentable {
             self.lineHeight = preferences.lineHeightMultiple
             self.wordWrap = preferences.wordWrap
         }
+    }
+}
+
+private final class DroppingWebView: WKWebView {
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedTextFileURLs(from: sender).isEmpty ? [] : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedTextFileURLs(from: sender).isEmpty ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = droppedTextFileURLs(from: sender)
+        guard !urls.isEmpty else { return false }
+
+        Task { @MainActor in
+            EditorViewModel.shared.openDocuments(at: urls)
+        }
+
+        return true
+    }
+
+    private func droppedTextFileURLs(from sender: NSDraggingInfo) -> [URL] {
+        let pasteboard = sender.draggingPasteboard
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
+        return urls.filter { $0.pathExtension.lowercased() == "txt" }
     }
 }

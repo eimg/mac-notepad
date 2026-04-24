@@ -51,6 +51,7 @@ struct PlainTextEditorView: NSViewRepresentable {
 
         private var text: Binding<String>
         private var pageLoaded = false
+        private var pendingRenderState: RenderState?
         private var lastRenderedState: RenderState?
         private var lastSearchCommandNonce = -1
         private var lastSearchPanel = SearchPanelState()
@@ -61,7 +62,8 @@ struct PlainTextEditorView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             pageLoaded = true
-            applyStateIfNeeded(to: webView, text: text.wrappedValue, preferences: .default, force: true)
+            let state = pendingRenderState ?? RenderState(text: text.wrappedValue, preferences: .default)
+            applyRenderStateIfNeeded(to: webView, state: state, force: true)
             webView.evaluateJavaScript("window.notepad.focusEditor();")
         }
 
@@ -82,9 +84,13 @@ struct PlainTextEditorView: NSViewRepresentable {
         }
 
         func applyStateIfNeeded(to webView: WKWebView, text: String, preferences: EditorPreferences, force: Bool = false) {
-            guard pageLoaded else { return }
-
             let state = RenderState(text: text, preferences: preferences)
+            pendingRenderState = state
+            guard pageLoaded else { return }
+            applyRenderStateIfNeeded(to: webView, state: state, force: force)
+        }
+
+        private func applyRenderStateIfNeeded(to webView: WKWebView, state: RenderState, force: Bool = false) {
             guard force || lastRenderedState != state else { return }
             lastRenderedState = state
 

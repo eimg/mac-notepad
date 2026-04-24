@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 final class EditorViewModel: ObservableObject {
     static let shared = EditorViewModel()
     static let maxDocumentCount = 5
+    private static let fontSizeRange = 10.0...36.0
+    private static let lineHeightRange = 1.5...3.5
 
     @Published private(set) var documents = [EditorDocumentState()]
     @Published private(set) var selectedDocumentID: UUID
@@ -97,14 +99,14 @@ final class EditorViewModel: ObservableObject {
     }
 
     func adjustFontSize(by delta: Double) {
-        let newSize = min(max(preferences.fontSize + delta, 10), 36)
+        let newSize = Self.clamp(preferences.fontSize + delta, to: Self.fontSizeRange)
         guard newSize != preferences.fontSize else { return }
         preferences.fontSize = newSize
         persistPreferences()
     }
 
     func adjustLineHeight(by delta: Double) {
-        let newValue = min(max(preferences.lineHeightMultiple + delta, 1.5), 3.5)
+        let newValue = Self.clamp(preferences.lineHeightMultiple + delta, to: Self.lineHeightRange)
         guard newValue != preferences.lineHeightMultiple else { return }
         preferences.lineHeightMultiple = (newValue * 100).rounded() / 100
         persistPreferences()
@@ -205,6 +207,11 @@ final class EditorViewModel: ObservableObject {
                 documents[0] = openedDocument
                 selectedDocumentID = openedDocument.id
             } else {
+                guard canCreateNewDocument else {
+                    NSSound.beep()
+                    return
+                }
+
                 documents.append(openedDocument)
                 selectedDocumentID = openedDocument.id
             }
@@ -389,9 +396,12 @@ final class EditorViewModel: ObservableObject {
     }
 
     private static func loadPreferences(from defaults: UserDefaults) -> EditorPreferences {
-        let fontName = defaults.string(forKey: DefaultsKey.fontName) ?? EditorPreferences.default.fontName
-        let fontSize = defaults.object(forKey: DefaultsKey.fontSize) as? Double ?? EditorPreferences.default.fontSize
-        let lineHeightMultiple = defaults.object(forKey: DefaultsKey.lineHeightMultiple) as? Double ?? EditorPreferences.default.lineHeightMultiple
+        let storedFontName = defaults.string(forKey: DefaultsKey.fontName)
+        let fontName = sanitizeFontName(storedFontName)
+        let storedFontSize = defaults.object(forKey: DefaultsKey.fontSize) as? Double ?? EditorPreferences.default.fontSize
+        let fontSize = clamp(storedFontSize, to: fontSizeRange)
+        let storedLineHeight = defaults.object(forKey: DefaultsKey.lineHeightMultiple) as? Double ?? EditorPreferences.default.lineHeightMultiple
+        let lineHeightMultiple = clamp(storedLineHeight, to: lineHeightRange)
         let hasWrapValue = defaults.object(forKey: DefaultsKey.wordWrap) != nil
         let wordWrap = hasWrapValue ? defaults.bool(forKey: DefaultsKey.wordWrap) : EditorPreferences.default.wordWrap
 
@@ -401,6 +411,24 @@ final class EditorViewModel: ObservableObject {
             lineHeightMultiple: lineHeightMultiple,
             wordWrap: wordWrap
         )
+    }
+
+    private static func sanitizeFontName(_ fontName: String?) -> String {
+        guard let fontName, !fontName.isEmpty else {
+            return EditorPreferences.default.fontName
+        }
+
+        guard EditorPreferences.availableFonts.contains(fontName),
+              NSFont(name: fontName, size: CGFloat(EditorPreferences.default.fontSize)) != nil
+        else {
+            return EditorPreferences.default.fontName
+        }
+
+        return fontName
+    }
+
+    private static func clamp(_ value: Double, to range: ClosedRange<Double>) -> Double {
+        min(max(value, range.lowerBound), range.upperBound)
     }
 
     nonisolated static func readPlainText(from url: URL) throws -> String {

@@ -84,9 +84,11 @@
   <script>
     const source = document.getElementById("source");
     const wrapper = document.documentElement;
+    const selectionEndGutter = 18;
     let suppressSend = false;
     let searchQuery = "";
     let replacementText = "";
+    let selectionClampFrame = null;
 
     const editor = CodeMirror.fromTextArea(source, {
       dragDrop: false,
@@ -100,12 +102,37 @@
       window.webkit.messageHandlers.notepadTextChanged.postMessage(editor.getValue());
     });
 
+    function clampSelectionToEditorGutter() {
+      selectionClampFrame = null;
+      const editorRect = editor.getWrapperElement().getBoundingClientRect();
+      const maxRight = editorRect.right - selectionEndGutter;
+      document.querySelectorAll(".CodeMirror-selected").forEach((selection) => {
+        const rect = selection.getBoundingClientRect();
+        const overflow = rect.right - maxRight;
+        if (overflow <= 0) return;
+
+        const width = parseFloat(selection.style.width || `${rect.width}`);
+        selection.style.width = `${Math.max(0, width - overflow)}px`;
+      });
+    }
+
+    function scheduleSelectionClamp() {
+      if (selectionClampFrame !== null) return;
+      selectionClampFrame = requestAnimationFrame(clampSelectionToEditorGutter);
+    }
+
+    editor.on("cursorActivity", scheduleSelectionClamp);
+    editor.on("scroll", scheduleSelectionClamp);
+    editor.on("refresh", scheduleSelectionClamp);
+    window.addEventListener("resize", scheduleSelectionClamp);
+
     function applyConfig(config) {
       wrapper.style.setProperty("--editor-font-family", config.fontFamily);
       wrapper.style.setProperty("--editor-font-size", `${config.fontSize}px`);
       wrapper.style.setProperty("--editor-line-height", `${config.lineHeight}`);
       editor.setOption("lineWrapping", config.wordWrap);
       editor.refresh();
+      scheduleSelectionClamp();
     }
 
     function normalizeLineEndings(value) {
@@ -171,6 +198,7 @@
             } catch (_) {}
           }
           suppressSend = false;
+          scheduleSelectionClamp();
         }
       },
       updateSearch(query, replacement) {

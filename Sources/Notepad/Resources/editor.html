@@ -93,8 +93,7 @@
     const editor = CodeMirror.fromTextArea(source, {
       dragDrop: false,
       lineWrapping: true,
-      placeholder: "New note...",
-      viewportMargin: Infinity
+      placeholder: "New note..."
     });
 
     editor.on("changes", () => {

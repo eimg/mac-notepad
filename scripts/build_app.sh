@@ -5,7 +5,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Notepad"
 BUILD_DIR="$ROOT_DIR/.build"
-RELEASE_DIR="$BUILD_DIR/arm64-apple-macosx/release"
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -17,6 +16,7 @@ ICON_NAME="AppIcon.icns"
 cd "$ROOT_DIR"
 
 swift build -c release
+RELEASE_DIR="$(swift build --show-bin-path -c release)"
 
 rm -rf "$APP_DIR"
 rm -rf "$ICONSET_DIR"

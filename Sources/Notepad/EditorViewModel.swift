@@ -18,7 +18,16 @@ final class EditorViewModel: ObservableObject {
     @Published var isSearchPopoverPresented = false
 
     private let defaults: UserDefaults
+    private let unsavedChangesDecision: (EditorDocumentState, String) -> UnsavedChangesDecision
+    private let errorPresenter: (String) -> Void
+    private let warningPresenter: (String, String) -> Void
     private weak var trackedWindow: NSWindow?
+
+    enum UnsavedChangesDecision {
+        case save
+        case discard
+        case cancel
+    }
 
     private enum DefaultsKey {
         static let fontName = "editor.fontName"
@@ -27,9 +36,17 @@ final class EditorViewModel: ObservableObject {
         static let wordWrap = "editor.wordWrap"
     }
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        unsavedChangesDecision: ((EditorDocumentState, String) -> UnsavedChangesDecision)? = nil,
+        errorPresenter: ((String) -> Void)? = nil,
+        warningPresenter: ((String, String) -> Void)? = nil
+    ) {
         let initialDocument = EditorDocumentState()
         self.defaults = defaults
+        self.unsavedChangesDecision = unsavedChangesDecision ?? Self.presentUnsavedChangesAlert
+        self.errorPresenter = errorPresenter ?? Self.presentErrorAlert
+        self.warningPresenter = warningPresenter ?? Self.presentWarningAlert
         self.documents = [initialDocument]
         self.selectedDocumentID = initialDocument.id
         self.preferences = EditorViewModel.loadPreferences(from: defaults)
@@ -263,22 +280,34 @@ final class EditorViewModel: ObservableObject {
         panel.nameFieldStringValue = currentDocument.fileURL?.lastPathComponent ?? "Untitled.txt"
 
         guard panel.runModal() == .OK, let url = panel.url else { return false }
-        return writeDocument(to: url)
+        return saveCurrentDocument(to: url)
+    }
+
+    @discardableResult
+    func saveCurrentDocument(to url: URL) -> Bool {
+        let standardizedURL = url.standardizedFileURL
+        let isOpenInAnotherTab = documents.contains { document in
+            document.id != currentDocument.id &&
+            document.fileURL?.standardizedFileURL == standardizedURL
+        }
+        if isOpenInAnotherTab {
+            presentWarning(
+                title: "File Already Open",
+                message: "\(standardizedURL.lastPathComponent) is already open in another tab. Close that tab before saving this note to the same file."
+            )
+            return false
+        }
+
+        return writeDocument(to: standardizedURL)
     }
 
     func confirmTermination() -> NSApplication.TerminateReply {
-        for documentID in documents.map(\.id) {
-            selectedDocumentID = documentID
-            guard confirmIfNeeded(action: "quit") else {
-                return .terminateCancel
-            }
-        }
-        return .terminateNow
+        confirmAllIfNeeded(action: "quit") ? .terminateNow : .terminateCancel
     }
 
     func confirmClose(window: NSWindow) -> Bool {
         trackedWindow = window
-        let shouldClose = confirmIfNeeded(action: "close this window")
+        let shouldClose = confirmAllIfNeeded(action: "close this window")
         if shouldClose {
             resetAfterWindowClose()
         }
@@ -321,7 +350,7 @@ final class EditorViewModel: ObservableObject {
     private func writeDocument(to url: URL) -> Bool {
         do {
             try currentDocument.text.write(to: url, atomically: true, encoding: .utf8)
-            currentDocument.fileURL = url
+            currentDocument.fileURL = url.standardizedFileURL
             currentDocument.savedText = currentDocument.text
             updateWindowState()
             return true
@@ -334,9 +363,34 @@ final class EditorViewModel: ObservableObject {
     private func confirmIfNeeded(action: String) -> Bool {
         guard currentDocument.isDirty else { return true }
 
+        switch unsavedChangesDecision(currentDocument, action) {
+        case .save:
+            return saveDocument()
+        case .discard:
+            return true
+        case .cancel:
+            return false
+        }
+    }
+
+    private func confirmAllIfNeeded(action: String) -> Bool {
+        let originalSelection = selectedDocumentID
+        for documentID in documents.map(\.id) {
+            selectedDocumentID = documentID
+            updateWindowState()
+            guard confirmIfNeeded(action: action) else {
+                selectedDocumentID = originalSelection
+                updateWindowState()
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func presentUnsavedChangesAlert(document: EditorDocumentState, action: String) -> UnsavedChangesDecision {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Do you want to save changes to \(currentDocument.displayTitle)?"
+        alert.messageText = "Do you want to save changes to \(document.displayTitle)?"
         alert.informativeText = "Your changes will be lost if you don’t save them before you \(action)."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
@@ -344,18 +398,34 @@ final class EditorViewModel: ObservableObject {
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            return saveDocument()
+            return .save
         case .alertThirdButtonReturn:
-            return true
+            return .discard
         default:
-            return false
+            return .cancel
         }
     }
 
     private func presentError(message: String) {
+        errorPresenter(message)
+    }
+
+    private func presentWarning(title: String, message: String) {
+        warningPresenter(title, message)
+    }
+
+    private static func presentErrorAlert(message: String) {
         let alert = NSAlert()
         alert.alertStyle = .critical
         alert.messageText = "Notepad Error"
+        alert.informativeText = message
+        alert.runModal()
+    }
+
+    private static func presentWarningAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
         alert.informativeText = message
         alert.runModal()
     }
@@ -435,6 +505,10 @@ final class EditorViewModel: ObservableObject {
         let data = try Data(contentsOf: url)
         if let utf8Text = String(data: data, encoding: .utf8) {
             return utf8Text
+        }
+        if (data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF])),
+           let utf16Text = String(data: data, encoding: .utf16) {
+            return utf16Text
         }
         throw CocoaError(.fileReadInapplicableStringEncoding)
     }

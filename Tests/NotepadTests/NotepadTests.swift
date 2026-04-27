@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import Notepad
@@ -112,6 +113,66 @@ import Testing
     #expect(model.documents.allSatisfy { $0.fileURL != urls.last })
 }
 
+@MainActor
+@Test func closingWindowPromptsForDirtyBackgroundTabs() async throws {
+    let defaults = UserDefaults(suiteName: "NotepadTests.closeDirtyBackgroundTabs")!
+    defaults.removePersistentDomain(forName: "NotepadTests.closeDirtyBackgroundTabs")
+
+    var promptedDocuments = [String]()
+    let model = EditorViewModel(
+        defaults: defaults,
+        unsavedChangesDecision: { document, _ in
+            promptedDocuments.append(document.text)
+            return .discard
+        }
+    )
+
+    model.updateText("dirty background")
+    model.newDocument()
+    #expect(model.documents.count == 2)
+    #expect(model.currentDocument.text.isEmpty)
+
+    let window = NSWindow()
+    let shouldClose = model.confirmClose(window: window)
+
+    #expect(shouldClose)
+    #expect(promptedDocuments == ["dirty background"])
+    #expect(model.documents.count == 1)
+    #expect(model.currentDocument.text.isEmpty)
+}
+
+@MainActor
+@Test func saveAsRejectsURLAlreadyOpenInAnotherTab() async throws {
+    let defaults = UserDefaults(suiteName: "NotepadTests.saveAsDuplicateURL")!
+    defaults.removePersistentDomain(forName: "NotepadTests.saveAsDuplicateURL")
+
+    let directory = FileManager.default.temporaryDirectory
+    let url = directory.appending(path: UUID().uuidString).appendingPathExtension("txt")
+    try "original".write(to: url, atomically: true, encoding: .utf8)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    var warnings = [(title: String, message: String)]()
+    let model = EditorViewModel(
+        defaults: defaults,
+        warningPresenter: { title, message in
+            warnings.append((title, message))
+        }
+    )
+    model.openDocument(at: url)
+    model.newDocument()
+    model.updateText("replacement")
+
+    let didSave = model.saveCurrentDocument(to: url)
+
+    #expect(!didSave)
+    #expect(model.documents.count == 2)
+    #expect(model.currentDocument.fileURL == nil)
+    #expect(try String(contentsOf: url, encoding: .utf8) == "original")
+    #expect(warnings.count == 1)
+    #expect(warnings.first?.title == "File Already Open")
+    #expect(warnings.first?.message == "\(url.lastPathComponent) is already open in another tab. Close that tab before saving this note to the same file.")
+}
+
 @Test func readsUTF8TextFiles() async throws {
     let directory = FileManager.default.temporaryDirectory
     let url = directory.appending(path: UUID().uuidString).appendingPathExtension("txt")
@@ -122,10 +183,22 @@ import Testing
     #expect(value == "hello")
 }
 
+@Test func readsUTF16TextFilesWithByteOrderMark() async throws {
+    let directory = FileManager.default.temporaryDirectory
+    let url = directory.appending(path: UUID().uuidString).appendingPathExtension("txt")
+    var data = Data([0xFF, 0xFE])
+    data.append("hello".data(using: .utf16LittleEndian)!)
+    try data.write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let value = try EditorViewModel.readPlainText(from: url)
+    #expect(value == "hello")
+}
+
 @Test func rejectsNonUTF8Data() async throws {
     let directory = FileManager.default.temporaryDirectory
     let url = directory.appending(path: UUID().uuidString).appendingPathExtension("txt")
-    try Data([0xFF, 0xFE, 0x00, 0x00]).write(to: url)
+    try Data([0xFF, 0x00, 0xFE]).write(to: url)
     defer { try? FileManager.default.removeItem(at: url) }
 
     #expect(throws: CocoaError.self) {

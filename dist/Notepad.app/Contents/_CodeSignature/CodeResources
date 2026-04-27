@@ -6,7 +6,11 @@
 	<dict>
 		<key>Resources/AppIcon.icns</key>
 		<data>
-		SCjWLcgi9vrrLn49TM47qR9+nvE=
+		PY15NitMIKPfmqeq1EwrSnaHnUI=
+		</data>
+		<key>Resources/Notepad_Notepad.bundle/Resources/.DS_Store</key>
+		<data>
+		tWhazg/zWMTeSIfNsCTcEZBlH9I=
 		</data>
 		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/addon/display/placeholder.min.js</key>
 		<data>
@@ -26,7 +30,7 @@
 		</data>
 		<key>Resources/Notepad_Notepad.bundle/Resources/editor.html</key>
 		<data>
-		vbf6p3IUw2e+684Z50rGb0ISiH8=
+		A6ZAB1NGW1N7R92epN0MuXOf82A=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -35,7 +39,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			9N/XbwdCDkyb6ctNyYHQDOuCuqASmmDDcHiaXeODJ98=
+			pTIKoJt2a0HPAcWsK1XY2/6G5lqyv9eMDlmcsk0YL5M=
 			</data>
 		</dict>
 		<key>Resources/Notepad_Notepad.bundle/Resources/codemirror/addon/display/placeholder.min.js</key>
@@ -70,7 +74,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			tXGWmGuq9rE4hXPeK2uZasyHhMeXdQd1jVc2Tq0g5RY=
+			NOJiqyBoaU+GkPbeTC6VwywhIBcvJ95UMcOIezEwYMg=
 			</data>
 		</dict>
 	</dict>

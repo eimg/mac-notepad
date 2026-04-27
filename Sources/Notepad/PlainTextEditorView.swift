@@ -15,7 +15,7 @@ struct PlainTextEditorView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.add(context.coordinator, name: Coordinator.handlerName)
         configuration.userContentController.add(context.coordinator, name: Coordinator.selectionHandlerName)
 

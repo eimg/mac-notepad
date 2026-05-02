@@ -24,7 +24,7 @@ struct PlainTextEditorView: NSViewRepresentable {
         webView.setValue(false, forKey: "drawsBackground")
         webView.registerForDraggedTypes([.fileURL])
 
-        if let editorURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
+        if let editorURL = AppResources.editorHTMLURL {
             webView.loadFileURL(editorURL, allowingReadAccessTo: editorURL.deletingLastPathComponent())
         }
 
@@ -161,6 +161,38 @@ struct PlainTextEditorView: NSViewRepresentable {
             self.lineHeight = preferences.lineHeightMultiple
             self.wordWrap = preferences.wordWrap
         }
+    }
+}
+
+private enum AppResources {
+    static var editorHTMLURL: URL? {
+        if let bundledURL = Bundle.main.url(forResource: "editor", withExtension: "html") {
+            return bundledURL
+        }
+
+        return developmentResourceURL?.appending(path: "editor.html")
+    }
+
+    private static var developmentResourceURL: URL? {
+        #if DEBUG
+        guard let executableURL = Bundle.main.executableURL else { return nil }
+
+        var directory = executableURL.deletingLastPathComponent()
+        while directory.path != "/" {
+            let candidate = directory
+                .appending(path: "Sources")
+                .appending(path: "Notepad")
+                .appending(path: "Resources")
+
+            if FileManager.default.fileExists(atPath: candidate.appending(path: "editor.html").path) {
+                return candidate
+            }
+
+            directory.deleteLastPathComponent()
+        }
+        #endif
+
+        return nil
     }
 }
 

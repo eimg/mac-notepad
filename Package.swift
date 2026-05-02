@@ -11,9 +11,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Notepad",
-            resources: [
-                .copy("Resources"),
-            ]
+            exclude: ["Resources"]
         ),
         .testTarget(
             name: "NotepadTests",

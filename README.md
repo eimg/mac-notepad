@@ -25,6 +25,12 @@ swift test
 open dist/Notepad.app
 ```
 
+To verify the app is portable after copying to `/Applications`, run:
+
+```bash
+./scripts/verify_portable_app.sh
+```
+
 ## Quick Test
 
 If you just want to try the app without building it yourself, the repository also includes a ready-to-run copy at `dist/Notepad.app`.

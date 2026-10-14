@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Notepad"
 BUILD_DIR="$ROOT_DIR/.build"
-APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
+APP_DIR="${APP_OUTPUT_DIR:-$ROOT_DIR/dist}/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
@@ -13,11 +13,27 @@ ICON_SOURCE="$ROOT_DIR/App/AppIcon.png"
 APP_RESOURCES_SOURCE="$ROOT_DIR/Sources/Notepad/Resources"
 ICONSET_DIR="$BUILD_DIR/AppIcon.iconset"
 ICON_NAME="AppIcon.icns"
+APP_VERSION="${APP_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT_DIR/App/Info.plist")}"
+BUILD_NUMBER="${BUILD_NUMBER:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT_DIR/App/Info.plist")}"
+BUILD_ARCH="${BUILD_ARCH:-native}"
+
+if [[ ! "$APP_VERSION" =~ '^[0-9]+(\.[0-9]+){0,2}$' || ! "$BUILD_NUMBER" =~ '^[0-9]+$' ]]; then
+    echo "error: APP_VERSION must have one to three numeric components; BUILD_NUMBER must be numeric" >&2
+    exit 1
+fi
+
+BUILD_ARGS=(-c release)
+case "$BUILD_ARCH" in
+    native) ;;
+    arm64|x86_64) BUILD_ARGS+=(--arch "$BUILD_ARCH") ;;
+    universal) BUILD_ARGS+=(--arch arm64 --arch x86_64) ;;
+    *) echo "error: BUILD_ARCH must be native, arm64, x86_64, or universal" >&2; exit 1 ;;
+esac
 
 cd "$ROOT_DIR"
 
-swift build -c release
-RELEASE_DIR="$(swift build --show-bin-path -c release)"
+swift build "${BUILD_ARGS[@]}"
+RELEASE_DIR="$(swift build --show-bin-path "${BUILD_ARGS[@]}")"
 
 rm -rf "$APP_DIR"
 rm -rf "$ICONSET_DIR"
@@ -36,6 +52,8 @@ cp "$ICON_SOURCE" "$ICONSET_DIR/icon_512x512@2x.png"
 iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/$ICON_NAME"
 
 cp "$ROOT_DIR/App/Info.plist" "$CONTENTS_DIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$CONTENTS_DIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS_DIR/Info.plist"
 cp "$RELEASE_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 ditto "$APP_RESOURCES_SOURCE" "$RESOURCES_DIR"
@@ -47,7 +65,7 @@ while IFS= read -r rpath; do
             install_name_tool -delete_rpath "$rpath" "$MACOS_DIR/$APP_NAME"
             ;;
     esac
-done < <(otool -l "$MACOS_DIR/$APP_NAME" | awk '/cmd LC_RPATH/{getline; getline; print $2}')
+done < <(otool -l "$MACOS_DIR/$APP_NAME" | awk '/cmd LC_RPATH/{getline; getline; print $2}' | sort -u)
 
 if find "$APP_DIR" -type l -exec test ! -e {} \; -print -quit | grep -q .; then
     echo "error: bundle contains a broken symlink" >&2
@@ -63,6 +81,7 @@ fi
 
 if command -v codesign >/dev/null 2>&1; then
     codesign --force --deep --sign - "$APP_DIR" >/dev/null
+    codesign --verify --deep --strict "$APP_DIR"
 fi
 
 echo "Built $APP_DIR"

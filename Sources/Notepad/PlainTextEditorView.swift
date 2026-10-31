@@ -8,9 +8,13 @@ struct PlainTextEditorView: NSViewRepresentable {
     let searchPanel: SearchPanelState
     let searchCommand: SearchCommand?
     let searchCommandNonce: Int
+    let onSelectionForSearch: @MainActor (String) -> Void
+    let onSearchResults: @MainActor (SearchResults) -> Void
+    let onCloseSearch: @MainActor () -> Void
+    let onDroppedFileURLs: @MainActor ([URL]) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, onSelectionForSearch: onSelectionForSearch, onSearchResults: onSearchResults, onCloseSearch: onCloseSearch)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -18,8 +22,11 @@ struct PlainTextEditorView: NSViewRepresentable {
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.add(context.coordinator, name: Coordinator.handlerName)
         configuration.userContentController.add(context.coordinator, name: Coordinator.selectionHandlerName)
+        configuration.userContentController.add(context.coordinator, name: Coordinator.resultsHandlerName)
+        configuration.userContentController.add(context.coordinator, name: Coordinator.closeSearchHandlerName)
 
         let webView = DroppingWebView(frame: .zero, configuration: configuration)
+        webView.onDroppedFileURLs = onDroppedFileURLs
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
         webView.registerForDraggedTypes([.fileURL])
@@ -45,9 +52,17 @@ struct PlainTextEditorView: NSViewRepresentable {
         )
     }
 
+    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        for name in [Coordinator.handlerName, Coordinator.selectionHandlerName, Coordinator.resultsHandlerName, Coordinator.closeSearchHandlerName] {
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: name)
+        }
+    }
+
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         static let handlerName = "notepadTextChanged"
         static let selectionHandlerName = "notepadSelection"
+        static let resultsHandlerName = "notepadSearchResults"
+        static let closeSearchHandlerName = "notepadCloseSearch"
 
         private var text: Binding<String>
         private var pageLoaded = false
@@ -55,16 +70,28 @@ struct PlainTextEditorView: NSViewRepresentable {
         private var lastRenderedState: RenderState?
         private var lastSearchCommandNonce = -1
         private var lastSearchPanel = SearchPanelState()
+        private var pendingSearch: (SearchPanelState, SearchCommand?, Int)?
+        private let onSelectionForSearch: @MainActor (String) -> Void
+        private let onSearchResults: @MainActor (SearchResults) -> Void
+        private let onCloseSearch: @MainActor () -> Void
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, onSelectionForSearch: @escaping @MainActor (String) -> Void, onSearchResults: @escaping @MainActor (SearchResults) -> Void, onCloseSearch: @escaping @MainActor () -> Void = {}) {
             self.text = text
+            self.onSelectionForSearch = onSelectionForSearch
+            self.onSearchResults = onSearchResults
+            self.onCloseSearch = onCloseSearch
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             pageLoaded = true
             let state = pendingRenderState ?? RenderState(text: text.wrappedValue, preferences: .default)
             applyRenderStateIfNeeded(to: webView, state: state, force: true)
-            webView.evaluateJavaScript("window.notepad.focusEditor();")
+            if let (panel, command, nonce) = pendingSearch {
+                applySearchIfNeeded(to: webView, panel: panel, command: command, nonce: nonce)
+            }
+            if pendingSearch?.0.isVisible != true {
+                webView.evaluateJavaScript("window.notepad.focusEditor();")
+            }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -78,8 +105,17 @@ struct PlainTextEditorView: NSViewRepresentable {
                 }
             } else if message.name == Self.selectionHandlerName, let value = message.body as? String {
                 Task { @MainActor in
-                    EditorViewModel.shared.useSelectionForSearch(value)
+                    onSelectionForSearch(value)
                 }
+            } else if message.name == Self.closeSearchHandlerName {
+                Task { @MainActor in onCloseSearch() }
+            } else if message.name == Self.resultsHandlerName,
+                      let body = message.body as? [String: Any],
+                      let query = body["query"] as? String,
+                      let total = body["total"] as? Int,
+                      let current = body["current"] as? Int {
+                let results = SearchResults(query: query, total: total, current: current)
+                Task { @MainActor in onSearchResults(results) }
             }
         }
 
@@ -111,29 +147,34 @@ struct PlainTextEditorView: NSViewRepresentable {
         }
 
         func applySearchIfNeeded(to webView: WKWebView, panel: SearchPanelState, command: SearchCommand?, nonce: Int) {
+            pendingSearch = (panel, command, nonce)
             guard pageLoaded else { return }
 
-            if panel != lastSearchPanel {
+            if panel.query != lastSearchPanel.query || panel.replacement != lastSearchPanel.replacement || panel.isVisible != lastSearchPanel.isVisible {
                 lastSearchPanel = panel
-                if let queryJSON = Self.escapeForJavaScriptString(panel.query),
-                   let replacementJSON = Self.escapeForJavaScriptString(panel.replacement) {
-                    webView.evaluateJavaScript("window.notepad.updateSearch('\(queryJSON)', '\(replacementJSON)');")
+                if let queryJSON = Self.javaScriptLiteral(panel.query),
+                   let replacementJSON = Self.javaScriptLiteral(panel.replacement) {
+                    webView.evaluateJavaScript("window.notepad.updateSearch(\(queryJSON), \(replacementJSON), \(panel.isVisible));")
                 }
             }
 
             guard nonce != lastSearchCommandNonce, let command else { return }
             lastSearchCommandNonce = nonce
-            webView.evaluateJavaScript("window.notepad.runSearchCommand('\(command.rawValue)');")
+            let script = "window.notepad.runSearchCommand('\(command.rawValue)');"
+            if command == .focusEditor {
+                webView.evaluateJavaScript(script) { [weak webView] _, _ in
+                    guard let webView else { return }
+                    webView.window?.makeFirstResponder(webView)
+                }
+            } else {
+                webView.evaluateJavaScript(script)
+            }
         }
 
-        private static func escapeForJavaScriptString(_ value: String) -> String? {
+        private static func javaScriptLiteral(_ value: String) -> String? {
             let data = try? JSONEncoder().encode(value)
             guard let json = data.flatMap({ String(data: $0, encoding: .utf8) }) else { return nil }
-            return json.dropFirst().dropLast()
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "'", with: "\\'")
-                .replacingOccurrences(of: "\n", with: "\\n")
-                .replacingOccurrences(of: "\r", with: "\\r")
+            return json
                 .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
                 .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
         }
@@ -196,29 +237,41 @@ private enum AppResources {
     }
 }
 
-private final class DroppingWebView: WKWebView {
+final class DroppingWebView: WKWebView {
+    var onDroppedFileURLs: (([URL]) -> Void)?
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        droppedTextFileURLs(from: sender).isEmpty ? [] : .copy
+        acceptedOperation(for: sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        droppedTextFileURLs(from: sender).isEmpty ? [] : .copy
+        acceptedOperation(for: sender)
     }
 
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let urls = droppedTextFileURLs(from: sender)
-        guard !urls.isEmpty else { return false }
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        // WKWebView's default prepare step expects WebKit's own drag state.
+        // This destination opens documents instead of inserting into the page.
+        acceptedOperation(for: sender) == .copy
+    }
 
-        Task { @MainActor in
-            EditorViewModel.shared.openDocuments(at: urls)
+    override func draggingExited(_ sender: NSDraggingInfo?) {}
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {}
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = TextFileDrop.urls(from: sender.draggingPasteboard)
+        guard acceptedOperation(for: sender) == .copy, let onDroppedFileURLs else { return false }
+
+        DispatchQueue.main.async {
+            onDroppedFileURLs(urls)
         }
 
         return true
     }
 
-    private func droppedTextFileURLs(from sender: NSDraggingInfo) -> [URL] {
-        let pasteboard = sender.draggingPasteboard
-        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
-        return urls.filter { $0.pathExtension.lowercased() == "txt" }
+    private func acceptedOperation(for sender: NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingSourceOperationMask.contains(.copy),
+              !TextFileDrop.urls(from: sender.draggingPasteboard).isEmpty else { return [] }
+        return .copy
     }
 }

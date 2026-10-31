@@ -15,13 +15,15 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var searchPanel = SearchPanelState()
     @Published private(set) var searchCommandNonce = 0
     @Published private(set) var searchCommand: SearchCommand?
-    @Published var isSearchPopoverPresented = false
+    @Published private(set) var isWindowOpen = false
+    @Published private(set) var searchFocusNonce = 0
 
     private let defaults: UserDefaults
     private let unsavedChangesDecision: (EditorDocumentState, String) -> UnsavedChangesDecision
     private let errorPresenter: (String) -> Void
     private let warningPresenter: (String, String) -> Void
     private weak var trackedWindow: NSWindow?
+    private var nextUntitledNumber = 2
 
     enum UnsavedChangesDecision {
         case save
@@ -79,7 +81,14 @@ final class EditorViewModel: ObservableObject {
 
     func attachWindow(_ window: NSWindow) {
         trackedWindow = window
-        window.delegate = WindowDelegate.shared
+        if !isWindowOpen {
+            isWindowOpen = true
+        }
+        updateWindowState()
+    }
+
+    func showWindow() {
+        isWindowOpen = true
         updateWindowState()
     }
 
@@ -99,7 +108,7 @@ final class EditorViewModel: ObservableObject {
     func selectDocument(_ id: UUID) {
         guard documents.contains(where: { $0.id == id }) else { return }
         if selectedDocumentID != id {
-            hideSearch(reset: true)
+            hideSearch(reset: true, restoreEditorFocus: false)
         }
         selectedDocumentID = id
         updateWindowState()
@@ -134,9 +143,10 @@ final class EditorViewModel: ObservableObject {
         persistPreferences()
     }
 
-    func showSearch(prefillFromSelection: Bool = false) {
+    func showSearch(prefillFromSelection: Bool = false, replacing: Bool = false) {
         searchPanel.isVisible = true
-        isSearchPopoverPresented = true
+        if replacing { searchPanel.showsReplacement = true }
+        searchFocusNonce += 1
         if prefillFromSelection {
             issueSearchCommand(.useSelectionForFind)
         }
@@ -150,22 +160,43 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
-    func hideSearch(reset: Bool = false) {
+    func hideSearch(reset: Bool = false, restoreEditorFocus: Bool = true) {
+        let wasVisible = searchPanel.isVisible
         searchPanel.isVisible = false
-        isSearchPopoverPresented = false
         if reset {
-            searchPanel.query = ""
-            searchPanel.replacement = ""
+            searchPanel = SearchPanelState()
+        }
+        if wasVisible && restoreEditorFocus {
+            issueSearchCommand(.focusEditor)
         }
     }
 
     func setSearchQuery(_ value: String) {
+        guard searchPanel.query != value else { return }
         searchPanel.query = value
+        searchPanel.matchCount = nil
+        searchPanel.currentMatch = 0
     }
 
     func useSelectionForSearch(_ value: String) {
         guard !value.isEmpty else { return }
-        searchPanel.query = value
+        setSearchQuery(value)
+    }
+
+    func setShowsReplacement(_ value: Bool) {
+        searchPanel.showsReplacement = value
+    }
+
+    func updateSearchResults(_ results: SearchResults, for documentID: UUID) {
+        let normalizedQuery = searchPanel.query
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        guard documentID == selectedDocumentID, searchPanel.isVisible,
+              results.query == normalizedQuery, results.total >= 0,
+              (0...results.total).contains(results.current) else { return }
+        guard searchPanel.matchCount != results.total || searchPanel.currentMatch != results.current else { return }
+        searchPanel.matchCount = results.total
+        searchPanel.currentMatch = results.current
     }
 
     func setReplacementText(_ value: String) {
@@ -194,8 +225,8 @@ final class EditorViewModel: ObservableObject {
             return
         }
 
-        hideSearch(reset: true)
-        let newDocument = EditorDocumentState()
+        hideSearch(reset: true, restoreEditorFocus: false)
+        let newDocument = makeUntitledDocument()
         documents.append(newDocument)
         selectedDocumentID = newDocument.id
         updateWindowState()
@@ -215,6 +246,7 @@ final class EditorViewModel: ObservableObject {
         do {
             let standardizedURL = url.standardizedFileURL
             if selectOpenDocument(at: standardizedURL) {
+                showWindow()
                 return
             }
 
@@ -232,7 +264,7 @@ final class EditorViewModel: ObservableObject {
                 documents.append(openedDocument)
                 selectedDocumentID = openedDocument.id
             }
-            updateWindowState()
+            showWindow()
         } catch {
             presentError(message: "Could not open \(url.lastPathComponent).\n\(error.localizedDescription)")
         }
@@ -244,24 +276,33 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
-    func openDroppedItems(from providers: [NSItemProvider]) -> Bool {
+    func openDroppedItems(from providers: [NSItemProvider], for documentID: UUID? = nil) -> Bool {
         let fileURLType = UTType.fileURL.identifier
         let matchingProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(fileURLType) }
         guard !matchingProviders.isEmpty else { return false }
 
-        for provider in matchingProviders {
-            provider.loadItem(forTypeIdentifier: fileURLType, options: nil) { item, _ in
-                guard let data = item as? Data,
-                      let url = URL(dataRepresentation: data, relativeTo: nil),
-                      url.pathExtension.lowercased() == "txt"
-                else { return }
-
-                DispatchQueue.main.async {
-                    self.openDocument(at: url)
+        Task { @MainActor in
+            var urls = [URL]()
+            for provider in matchingProviders {
+                let url: URL? = await withCheckedContinuation { continuation in
+                    provider.loadItem(forTypeIdentifier: fileURLType, options: nil) { item, _ in
+                        continuation.resume(returning: TextFileDrop.fileURL(from: item))
+                    }
                 }
+                if let url { urls.append(url) }
             }
+            if let documentID { selectDocument(documentID) }
+            _ = openDroppedFileURLs(urls)
         }
 
+        return true
+    }
+
+    @discardableResult
+    func openDroppedFileURLs(_ urls: [URL]) -> Bool {
+        let supported = TextFileDrop.supportedURLs(urls)
+        guard !supported.isEmpty else { return false }
+        openDocuments(at: supported)
         return true
     }
 
@@ -277,7 +318,7 @@ final class EditorViewModel: ObservableObject {
     func saveDocumentAs() -> Bool {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = currentDocument.fileURL?.lastPathComponent ?? "Untitled.txt"
+        panel.nameFieldStringValue = currentDocument.fileURL?.lastPathComponent ?? "\(currentDocument.displayTitle).txt"
 
         guard panel.runModal() == .OK, let url = panel.url else { return false }
         return saveCurrentDocument(to: url)
@@ -319,32 +360,51 @@ final class EditorViewModel: ObservableObject {
     }
 
     func closeDocument(id: UUID) {
-        guard documents.count > 1 else { return }
         guard let closingIndex = documents.firstIndex(where: { $0.id == id }) else { return }
 
         let previousSelection = selectedDocumentID
         selectedDocumentID = id
+        updateWindowState()
         guard confirmIfNeeded(action: "close this tab") else {
             selectedDocumentID = previousSelection
             updateWindowState()
             return
         }
 
+        if documents.count == 1 {
+            // The tab has already passed the unsaved-changes check. Avoid prompting
+            // a second time through windowShouldClose(_:).
+            trackedWindow?.close()
+            resetAfterWindowClose()
+            return
+        }
+
         documents.remove(at: closingIndex)
 
-        if selectedDocumentID == id {
+        if previousSelection == id {
             let fallbackIndex = min(closingIndex, documents.count - 1)
             selectedDocumentID = documents[fallbackIndex].id
+            hideSearch(reset: true, restoreEditorFocus: false)
+        } else {
+            selectedDocumentID = previousSelection
         }
 
         updateWindowState()
     }
 
     func resetAfterWindowClose() {
-        let document = EditorDocumentState()
+        isWindowOpen = false
+        hideSearch(reset: true, restoreEditorFocus: false)
+        let document = makeUntitledDocument()
         documents = [document]
         selectedDocumentID = document.id
         updateWindowState()
+    }
+
+    private func makeUntitledDocument() -> EditorDocumentState {
+        let document = EditorDocumentState(untitledNumber: nextUntitledNumber)
+        nextUntitledNumber += 1
+        return document
     }
 
     private func writeDocument(to url: URL) -> Bool {

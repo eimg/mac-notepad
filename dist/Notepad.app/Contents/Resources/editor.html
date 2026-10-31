@@ -71,6 +71,10 @@
     span.CodeMirror-selectedtext {
       background: transparent !important;
     }
+    .notepad-search-match {
+      background: color-mix(in srgb, AccentColor 22%, Canvas);
+      border-radius: 2px;
+    }
     .CodeMirror-placeholder {
       color: color-mix(in srgb, CanvasText 45%, transparent) !important;
     }
@@ -89,6 +93,11 @@
     let searchQuery = "";
     let replacementText = "";
     let selectionClampFrame = null;
+    let searchVisible = false;
+    let searchRefreshTimer = null;
+    let matches = [];
+    let searchMarks = [];
+    let lastResults = "";
 
     const editor = CodeMirror.fromTextArea(source, {
       dragDrop: false,
@@ -99,6 +108,15 @@
     editor.on("changes", () => {
       if (suppressSend) return;
       window.webkit.messageHandlers.notepadTextChanged.postMessage(editor.getValue());
+      scheduleSearchRefresh();
+    });
+
+    editor.on("keydown", (_, event) => {
+      if (event.key === "Escape" && searchVisible) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.webkit.messageHandlers.notepadCloseSearch.postMessage("close");
+      }
     });
 
     function clampSelectionToEditorGutter() {
@@ -121,6 +139,7 @@
     }
 
     editor.on("cursorActivity", scheduleSelectionClamp);
+    editor.on("cursorActivity", publishSearchResults);
     editor.on("scroll", scheduleSelectionClamp);
     editor.on("refresh", scheduleSelectionClamp);
     window.addEventListener("resize", scheduleSelectionClamp);
@@ -135,53 +154,105 @@
     }
 
     function normalizeLineEndings(value) {
-      return value.replace(/\r\n/g, "\n");
+      return value.replace(/\r\n?/g, "\n");
     }
 
-    function focusAndReveal(from, to) {
-      editor.focus();
-      editor.setSelection(from, to);
-      editor.scrollIntoView({from, to}, 60);
+    function scheduleSearchRefresh() {
+      if (searchRefreshTimer !== null) return;
+      searchRefreshTimer = setTimeout(() => {
+        searchRefreshTimer = null;
+        rebuildSearch();
+      }, 0);
     }
 
-    function getCursorForDirection(reverse) {
-      const cursor = editor.getSearchCursor(searchQuery, reverse ? editor.getCursor("from") : editor.getCursor("to"));
+    function rebuildSearch() {
+      matches = [];
+      editor.operation(() => {
+        searchMarks.forEach(mark => mark.clear());
+        searchMarks = [];
+        if (!searchVisible || !searchQuery) return;
+        const cursor = editor.getSearchCursor(searchQuery, CodeMirror.Pos(0, 0));
+        while (cursor.findNext()) {
+          matches.push({from: cursor.from(), to: cursor.to()});
+        }
+        // Count every match; bound decorations so repetitive large notes remain responsive.
+        searchMarks = matches.slice(0, 1000).map(match =>
+          editor.markText(match.from, match.to, {className: "notepad-search-match"})
+        );
+      });
+      publishSearchResults();
+    }
+
+    function flushSearch() {
+      if (searchRefreshTimer !== null) {
+        clearTimeout(searchRefreshTimer);
+        searchRefreshTimer = null;
+        rebuildSearch();
+      }
+    }
+
+    function publishSearchResults() {
+      const from = editor.getCursor("from");
+      const to = editor.getCursor("to");
+      const current = matches.findIndex(match =>
+        CodeMirror.cmpPos(match.from, from) === 0 && CodeMirror.cmpPos(match.to, to) === 0
+      ) + 1;
+      const results = JSON.stringify({query: searchQuery, total: matches.length, current});
+      if (results === lastResults) return;
+      lastResults = results;
+      window.webkit.messageHandlers.notepadSearchResults.postMessage(JSON.parse(results));
+    }
+
+    function getCursorForDirection(reverse, includeCurrent = false) {
+      const start = editor.getCursor(reverse || includeCurrent ? "from" : "to");
+      const cursor = editor.getSearchCursor(searchQuery, start);
       if (cursor.find(reverse)) return cursor;
-
-      const wrapped = editor.getSearchCursor(searchQuery, reverse ? CodeMirror.Pos(editor.lastLine()) : CodeMirror.Pos(0, 0));
+      const lastLine = editor.lastLine();
+      const wrapStart = reverse
+        ? CodeMirror.Pos(lastLine, editor.getLine(lastLine).length)
+        : CodeMirror.Pos(0, 0);
+      const wrapped = editor.getSearchCursor(searchQuery, wrapStart);
       return wrapped.find(reverse) ? wrapped : null;
     }
 
-    function find(reverse = false) {
+    function find(reverse = false, includeCurrent = false) {
+      flushSearch();
       if (!searchQuery) return;
-      const cursor = getCursorForDirection(reverse);
+      const cursor = getCursorForDirection(reverse, includeCurrent);
       if (!cursor) return;
-      focusAndReveal(cursor.from(), cursor.to());
+      // Changing the selection must not take focus away from the Find field.
+      editor.setSelection(cursor.from(), cursor.to());
+      editor.scrollIntoView({from: cursor.from(), to: cursor.to()}, 60);
+      publishSearchResults();
     }
 
     function replaceCurrent() {
-      if (!searchQuery) return;
-      const selection = editor.getSelection();
-      if (selection !== searchQuery) {
-        find(false);
+      flushSearch();
+      if (!searchQuery || matches.length === 0) return;
+      const isSelectedMatch = () => matches.some(match =>
+        CodeMirror.cmpPos(match.from, editor.getCursor("from")) === 0 &&
+        CodeMirror.cmpPos(match.to, editor.getCursor("to")) === 0
+      );
+      if (!isSelectedMatch()) find(false, true);
+      if (isSelectedMatch()) {
+        editor.replaceSelection(replacementText, "end", "notepad-replace");
       }
-      if (editor.getSelection() === searchQuery) {
-        editor.replaceSelection(replacementText);
-      }
+      flushSearch();
       find(false);
     }
 
     function replaceAll() {
-      if (!searchQuery) return;
-      const cursor = editor.getSearchCursor(searchQuery, CodeMirror.Pos(0, 0));
-      const replacements = [];
-      while (cursor.findNext()) {
-        replacements.push({from: cursor.from(), to: cursor.to()});
-      }
-      for (let i = replacements.length - 1; i >= 0; i -= 1) {
-        const match = replacements[i];
-        editor.replaceRange(replacementText, match.from, match.to);
-      }
+      flushSearch();
+      if (!searchQuery || matches.length === 0) return;
+      const replacements = matches.slice();
+      editor.operation(() => {
+        for (let i = replacements.length - 1; i >= 0; i -= 1) {
+          const match = replacements[i];
+          editor.replaceRange(replacementText, match.from, match.to, "notepad-replace-all");
+        }
+      });
+      flushSearch();
+      publishSearchResults();
     }
 
     window.notepad = {
@@ -198,14 +269,27 @@
           }
           suppressSend = false;
           scheduleSelectionClamp();
+          scheduleSearchRefresh();
         }
       },
-      updateSearch(query, replacement) {
-        searchQuery = normalizeLineEndings(query);
+      updateSearch(query, replacement, visible = true) {
+        const nextQuery = normalizeLineEndings(query);
+        const changed = nextQuery !== searchQuery || visible !== searchVisible;
+        searchQuery = nextQuery;
         replacementText = normalizeLineEndings(replacement);
+        searchVisible = visible;
+        if (changed) {
+          if (searchRefreshTimer !== null) clearTimeout(searchRefreshTimer);
+          searchRefreshTimer = null;
+          rebuildSearch();
+          if (searchVisible && searchQuery) find(false, true);
+        }
       },
       runSearchCommand(command) {
         switch (command) {
+          case "focusEditor":
+            editor.focus();
+            break;
           case "useSelectionForFind":
             window.webkit.messageHandlers.notepadSelection.postMessage(editor.getSelection());
             break;
@@ -228,9 +312,6 @@
       }
     };
 
-    requestAnimationFrame(() => {
-      window.notepad.focusEditor();
-    });
   </script>
 </body>
 </html>

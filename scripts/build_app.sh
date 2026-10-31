@@ -22,18 +22,39 @@ if [[ ! "$APP_VERSION" =~ '^[0-9]+(\.[0-9]+){0,2}$' || ! "$BUILD_NUMBER" =~ '^[0
     exit 1
 fi
 
-BUILD_ARGS=(-c release)
+MACOS_SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+# The Swift Build backend in Swift 6.4 can write the deployment target into
+# LC_BUILD_VERSION's SDK field, which opts the app into older macOS styling.
+# Use SwiftPM's native backend so the linker records the selected SDK correctly.
+BUILD_ARGS=(-c release --build-system native --sdk "$MACOS_SDK_PATH")
 case "$BUILD_ARCH" in
-    native) ;;
-    arm64|x86_64) BUILD_ARGS+=(--arch "$BUILD_ARCH") ;;
-    universal) BUILD_ARGS+=(--arch arm64 --arch x86_64) ;;
+    native|arm64|x86_64) BUILD_ARCHITECTURES=("$BUILD_ARCH") ;;
+    universal) BUILD_ARCHITECTURES=(arm64 x86_64) ;;
     *) echo "error: BUILD_ARCH must be native, arm64, x86_64, or universal" >&2; exit 1 ;;
 esac
 
 cd "$ROOT_DIR"
 
-swift build "${BUILD_ARGS[@]}"
-RELEASE_DIR="$(swift build --show-bin-path "${BUILD_ARGS[@]}")"
+BUILT_EXECUTABLES=()
+for architecture in "${BUILD_ARCHITECTURES[@]}"; do
+    ARCH_BUILD_ARGS=("${BUILD_ARGS[@]}")
+    if [[ "$architecture" != native ]]; then
+        ARCH_BUILD_ARGS+=(--arch "$architecture")
+    fi
+    swift build "${ARCH_BUILD_ARGS[@]}"
+    ARCH_RELEASE_DIR="$(swift build --show-bin-path "${ARCH_BUILD_ARGS[@]}")"
+    BUILT_EXECUTABLES+=("$ARCH_RELEASE_DIR/$APP_NAME")
+done
+
+if [[ "$BUILD_ARCH" == universal ]]; then
+    # Passing both --arch flags to SwiftPM switches back to Swift Build, even
+    # with --build-system native. Combine two correctly linked native builds.
+    RELEASE_DIR="$BUILD_DIR/universal-release"
+    mkdir -p "$RELEASE_DIR"
+    lipo -create "${BUILT_EXECUTABLES[@]}" -output "$RELEASE_DIR/$APP_NAME"
+else
+    RELEASE_DIR="$ARCH_RELEASE_DIR"
+fi
 
 rm -rf "$APP_DIR"
 rm -rf "$ICONSET_DIR"
@@ -56,6 +77,22 @@ cp "$ROOT_DIR/App/Info.plist" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS_DIR/Info.plist"
 cp "$RELEASE_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
+
+# Check every architecture before signing so a future toolchain change cannot
+# silently ship a compatibility-styled UI again.
+SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+LINKED_SDK_VERSIONS="$(otool -l "$MACOS_DIR/$APP_NAME" | awk '$1 == "sdk" {print $2}')"
+if [[ -z "$LINKED_SDK_VERSIONS" ]]; then
+    echo "error: executable has no linked SDK version" >&2
+    exit 1
+fi
+while IFS= read -r linked_sdk; do
+    if [[ "${linked_sdk%%.*}" != "${SDK_VERSION%%.*}" ]]; then
+        echo "error: linked SDK $linked_sdk differs from selected SDK $SDK_VERSION; this changes native macOS styling" >&2
+        exit 1
+    fi
+done <<< "$LINKED_SDK_VERSIONS"
+
 ditto "$APP_RESOURCES_SOURCE" "$RESOURCES_DIR"
 find "$RESOURCES_DIR" -name ".DS_Store" -delete
 
